@@ -1,0 +1,281 @@
+from __future__ import annotations
+
+import yaml
+
+from .ast import (
+    AllCondition,
+    EventPolicy,
+    OperatorCall,
+    Rule,
+    RuleEmit,
+    RuleSet,
+    RuleWindow,
+    SequenceStep,
+    SequenceTagCondition,
+    SustainedTagCondition,
+)
+
+
+class RuleParseError(Exception):
+    pass
+
+
+_VALID_SUBJECTS = {"frame", "agent", "lane", "scenario", "agent_pair"}
+
+
+class RuleParser:
+    def parse_yaml(self, text: str) -> RuleSet:
+        try:
+            doc = yaml.safe_load(text)
+        except yaml.YAMLError as exc:
+            raise RuleParseError(f"Invalid YAML: {exc}") from exc
+
+        if not isinstance(doc, dict) or "rules" not in doc:
+            raise RuleParseError("Top-level 'rules' key is required")
+
+        rules_raw = doc["rules"]
+        if not isinstance(rules_raw, list):
+            raise RuleParseError("'rules' must be a list")
+
+        seen_ids: set[str] = set()
+        rules: list[Rule] = []
+
+        for i, rule_raw in enumerate(rules_raw):
+            rule = self._parse_rule(rule_raw, i)
+            if rule.rule_id in seen_ids:
+                raise RuleParseError(f"Duplicate rule id: '{rule.rule_id}'")
+            seen_ids.add(rule.rule_id)
+            rules.append(rule)
+
+        return RuleSet(rules=tuple(rules))
+
+    def _parse_rule(self, raw: dict, index: int) -> Rule:
+        if not isinstance(raw, dict):
+            raise RuleParseError(f"rules[{index}] must be a dict")
+
+        rule_id = raw.get("id")
+        if not rule_id:
+            raise RuleParseError(f"rules[{index}].id is required")
+
+        subject = raw.get("subject", "frame")
+        if subject not in _VALID_SUBJECTS:
+            raise RuleParseError(
+                f"rules[{index}].subject must be one of {_VALID_SUBJECTS}, got '{subject}'"
+            )
+
+        kind = raw.get("kind", "single_frame")
+        if kind not in ("single_frame", "temporal"):
+            raise RuleParseError(
+                f"rules[{index}].kind must be 'single_frame' or 'temporal', got '{kind}'"
+            )
+
+        description = raw.get("description")
+
+        window_raw = raw.get("window")
+        window = None
+        if window_raw is not None:
+            if not isinstance(window_raw, dict):
+                raise RuleParseError(f"rules[{index}].window must be a dict")
+            window = RuleWindow(history_steps=window_raw.get("history_steps"))
+
+        when_raw = raw.get("when")
+        if not isinstance(when_raw, dict):
+            raise RuleParseError(f"rules[{index}].when must be a dict")
+
+        if kind == "temporal":
+            condition = self._parse_temporal_condition(when_raw, index)
+        else:
+            if "all" not in when_raw:
+                raise RuleParseError(f"rules[{index}].when.all is required")
+            condition = self._parse_all_condition(when_raw["all"], index)
+
+        emit_raw = raw.get("emit")
+        if not isinstance(emit_raw, dict):
+            raise RuleParseError(f"rules[{index}].emit must be a dict")
+
+        tag_name = emit_raw.get("tag")
+        if not tag_name:
+            raise RuleParseError(f"rules[{index}].emit.tag is required")
+
+        metadata = emit_raw.get("metadata", {})
+        if not isinstance(metadata, dict):
+            raise RuleParseError(f"rules[{index}].emit.metadata must be a dict")
+
+        policy = self._parse_policy(emit_raw, index)
+
+        emit = RuleEmit(
+            tag_name=tag_name,
+            value=emit_raw.get("value", True),
+            metadata=metadata,
+            policy=policy,
+        )
+
+        return Rule(
+            rule_id=rule_id,
+            subject_type=subject,
+            condition=condition,
+            emit=emit,
+            kind=kind,
+            description=description,
+            window=window,
+        )
+
+    def _parse_temporal_condition(
+        self, when_raw: dict, rule_index: int
+    ) -> SustainedTagCondition | SequenceTagCondition:
+        # Temporal rules compose previously emitted tags. They should not call
+        # operators directly because the compiler validates tag-to-rule links.
+        if "all" in when_raw:
+            raise RuleParseError(
+                f"rules[{rule_index}] is temporal and must not contain 'when.all' with operators"
+            )
+
+        if "sequence" in when_raw:
+            return self._parse_sequence_condition(when_raw, rule_index)
+
+        tag_name = when_raw.get("tag")
+        if not tag_name:
+            raise RuleParseError(f"rules[{rule_index}].when.tag is required for temporal rules")
+
+        sustained_raw = when_raw.get("sustained")
+        if not isinstance(sustained_raw, dict):
+            raise RuleParseError(f"rules[{rule_index}].when.sustained must be a dict")
+
+        frames = sustained_raw.get("frames")
+        seconds = sustained_raw.get("seconds")
+
+        if frames is not None and seconds is not None:
+            raise RuleParseError(
+                f"rules[{rule_index}].when.sustained must not have both 'frames' and 'seconds'"
+            )
+
+        if frames is not None:
+            if not isinstance(frames, int) or frames <= 0:
+                raise RuleParseError(
+                    f"rules[{rule_index}].when.sustained.frames must be a positive integer"
+                )
+            return SustainedTagCondition(tag_name=tag_name, frames=frames)
+
+        if seconds is not None:
+            if not isinstance(seconds, (int, float)) or seconds <= 0:
+                raise RuleParseError(
+                    f"rules[{rule_index}].when.sustained.seconds must be a positive number"
+                )
+            return SustainedTagCondition(tag_name=tag_name, seconds=float(seconds))
+
+        raise RuleParseError(
+            f"rules[{rule_index}].when.sustained must have either 'frames' or 'seconds'"
+        )
+
+    def _parse_sequence_condition(
+        self, when_raw: dict, rule_index: int
+    ) -> SequenceTagCondition:
+        sequence_raw = when_raw.get("sequence")
+        if not isinstance(sequence_raw, list):
+            raise RuleParseError(f"rules[{rule_index}].when.sequence must be a list")
+
+        steps: list[SequenceStep] = []
+        for i, step_raw in enumerate(sequence_raw):
+            if not isinstance(step_raw, dict):
+                raise RuleParseError(
+                    f"rules[{rule_index}].when.sequence[{i}] must be a dict"
+                )
+            tag_name = step_raw.get("tag")
+            if not tag_name:
+                raise RuleParseError(
+                    f"rules[{rule_index}].when.sequence[{i}].tag is required"
+                )
+            steps.append(SequenceStep(tag_name=tag_name))
+
+        within_frames = when_raw.get("within_frames")
+        within_seconds = when_raw.get("within_seconds")
+
+        if within_frames is not None and within_seconds is not None:
+            raise RuleParseError(
+                f"rules[{rule_index}].when must not have both 'within_frames' and 'within_seconds'"
+            )
+
+        if within_frames is not None:
+            if not isinstance(within_frames, int) or within_frames <= 0:
+                raise RuleParseError(
+                    f"rules[{rule_index}].when.within_frames must be a positive integer"
+                )
+        elif within_seconds is not None:
+            if not isinstance(within_seconds, (int, float)) or within_seconds <= 0:
+                raise RuleParseError(
+                    f"rules[{rule_index}].when.within_seconds must be a positive number"
+                )
+            within_seconds = float(within_seconds)
+        else:
+            raise RuleParseError(
+                f"rules[{rule_index}].when must have either 'within_frames' or 'within_seconds'"
+            )
+
+        max_gap_frames = when_raw.get("max_gap_frames")
+        if max_gap_frames is not None:
+            if not isinstance(max_gap_frames, int) or max_gap_frames < 0:
+                raise RuleParseError(
+                    f"rules[{rule_index}].when.max_gap_frames must be a non-negative integer"
+                )
+
+        return SequenceTagCondition(
+            steps=tuple(steps),
+            within_frames=within_frames,
+            within_seconds=within_seconds,
+            max_gap_frames=max_gap_frames,
+        )
+
+    def _parse_all_condition(self, calls_raw: list, rule_index: int) -> AllCondition:
+        if not isinstance(calls_raw, list):
+            raise RuleParseError(f"rules[{rule_index}].when.all must be a list")
+
+        calls: list[OperatorCall] = []
+        for i, call_raw in enumerate(calls_raw):
+            if not isinstance(call_raw, dict):
+                raise RuleParseError(
+                    f"rules[{rule_index}].when.all[{i}] must be a dict"
+                )
+
+            operator_name = call_raw.get("operator")
+            if not operator_name:
+                raise RuleParseError(
+                    f"rules[{rule_index}].when.all[{i}].operator is required"
+                )
+
+            args = call_raw.get("args", {})
+            if not isinstance(args, dict):
+                raise RuleParseError(
+                    f"rules[{rule_index}].when.all[{i}].args must be a dict"
+                )
+
+            call = OperatorCall(
+                operator_name=operator_name,
+                args=args,
+                for_last_n_frames=call_raw.get("for_last_n_frames"),
+            )
+            calls.append(call)
+
+        return AllCondition(calls=tuple(calls))
+
+    def _parse_policy(self, emit_raw: dict, rule_index: int) -> EventPolicy:
+        policy_raw = emit_raw.get("policy")
+        if policy_raw is None:
+            return EventPolicy()
+
+        if not isinstance(policy_raw, dict):
+            raise RuleParseError(f"rules[{rule_index}].emit.policy must be a dict")
+
+        valid_keys = {"cooldown_frames"}
+        unknown = set(policy_raw.keys()) - valid_keys
+        if unknown:
+            raise RuleParseError(
+                f"rules[{rule_index}].emit.policy has unknown keys: {unknown}"
+            )
+
+        cooldown = policy_raw.get("cooldown_frames", 0)
+        if not isinstance(cooldown, int) or cooldown < 0:
+            raise RuleParseError(
+                f"rules[{rule_index}].emit.policy.cooldown_frames must be a non-negative integer"
+            )
+
+        return EventPolicy(cooldown_frames=cooldown)
