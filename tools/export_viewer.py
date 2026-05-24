@@ -1341,8 +1341,9 @@ def render_review_index_html(index: dict) -> str:
     body {{ margin: 0; font: 13px/1.4 system-ui, sans-serif; display: flex; height: 100vh; }}
     #reviewFileList {{ width: 340px; overflow: auto; border-right: 1px solid #d8dde6; background: #fff; }}
     .header {{ padding: 12px; border-bottom: 1px solid #d8dde6; font-weight: 650; }}
-    .row {{ padding: 8px 12px; border-bottom: 1px solid #eee; cursor: pointer; }}
+    .row {{ padding: 8px 12px; border-bottom: 1px solid #eee; cursor: pointer; border-left: 3px solid transparent; }}
     .row:hover {{ background: #f0fdfa; }}
+    .row.selected {{ background: #dff8f0; border-left-color: #0f766e; }}
     .row .name {{ font-weight: 600; }}
     .row .meta {{ color: #64748b; font-size: 11px; margin-top: 2px; }}
     #viewerFrame {{ flex: 1; border: none; }}
@@ -1359,7 +1360,11 @@ def render_review_index_html(index: dict) -> str:
     function selectFile(i) {{
       const files = JSON.parse(document.getElementById('reviewFileIndex').textContent).files;
       document.getElementById('viewerFrame').src = files[i].viewer_path;
+      document.querySelectorAll('#reviewFileList .row').forEach((row, index) => {{
+        row.classList.toggle('selected', index === i);
+      }});
     }}
+    if ({len(files)} > 0) selectFile(0);
   </script>
 </body>
 </html>"""

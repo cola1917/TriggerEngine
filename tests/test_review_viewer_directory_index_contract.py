@@ -152,6 +152,8 @@ class ReviewViewerDirectoryIndexContractTests(unittest.TestCase):
         self.assertIn("review_payload_00035.json", html)
         self.assertIn("review_viewers/review_payload_00035.html", html)
         self.assertIn("cut_in_risk", html)
+        self.assertIn(".row.selected", html)
+        self.assertIn("classList.toggle('selected'", html)
 
     def test_render_review_index_from_payload_dir_writes_index_and_review_viewers(self):
         from tools.export_viewer import render_review_index_from_payload_dir

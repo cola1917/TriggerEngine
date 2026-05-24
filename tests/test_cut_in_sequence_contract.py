@@ -195,12 +195,13 @@ class CutInSequenceContractTests(unittest.TestCase):
 
         self.assertEqual(
             operator_names,
-            [
-                "predicate.pair_types_are",
-                "predicate.pair_ego_speed_above",
-                "predicate.lateral_gap_between",
-                "predicate.lateral_motion_toward",
-                "predicate.heading_converging",
+                [
+                    "predicate.pair_types_are",
+                    "predicate.pair_ego_speed_above",
+                    "predicate.pair_other_speed_above",
+                    "predicate.lateral_gap_between",
+                    "predicate.lateral_motion_toward",
+                    "predicate.heading_converging",
             ],
         )
 

@@ -73,6 +73,7 @@ class BuiltinOperatorsContractTests(unittest.TestCase):
                 "predicate.same_path_overlap",
                 "predicate.near_red_light_stop_point",
                 "predicate.pair_ego_speed_above",
+                "predicate.pair_other_speed_above",
                 "predicate.red_light_before_stop_line",
                 "predicate.red_light_after_stop_line",
                 "predicate.red_light_crossing_transition",

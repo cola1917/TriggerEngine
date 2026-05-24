@@ -361,6 +361,30 @@ class PairEgoSpeedAboveOperator:
         )
 
 
+class PairOtherSpeedAboveOperator:
+    name = "predicate.pair_other_speed_above"
+    result_kind = "predicate"
+    subject_type = "agent_pair"
+
+    def evaluate(self, context, frame, subject, args):
+        if not subject.other.valid:
+            return OperatorResult(
+                self.name, "agent_pair", subject.subject_id,
+                frame.frame.step_index, frame.frame.timestamp_seconds,
+                False,
+                {},
+            )
+        threshold = args["threshold_mps"]
+        speed = _speed(subject.other)
+        value = speed > threshold
+        return OperatorResult(
+            self.name, "agent_pair", subject.subject_id,
+            frame.frame.step_index, frame.frame.timestamp_seconds,
+            value,
+            {"other_speed_mps": speed, "threshold_mps": threshold},
+        )
+
+
 class SamePathOverlapOperator:
     name = "predicate.same_path_overlap"
     result_kind = "predicate"
@@ -422,6 +446,31 @@ def _heading_delta(a: float, b: float) -> float:
     if delta > math.pi:
         delta = 2 * math.pi - delta
     return delta
+
+
+def _agent_heading_change_after(context, frame, track_id: int, horizon_seconds: float) -> float | None:
+    if context is None:
+        return None
+    start = None
+    end = None
+    start_time = frame.frame.timestamp_seconds
+    max_time = start_time + horizon_seconds
+    for aligned_frame in tuple(context.input_frames) + tuple(context.future_frames):
+        ts = aligned_frame.frame.timestamp_seconds
+        if ts < start_time or ts > max_time:
+            continue
+        agent = next(
+            (a for a in aligned_frame.frame.agent_states if a.track_id == track_id and a.valid),
+            None,
+        )
+        if agent is None:
+            continue
+        if start is None:
+            start = agent.heading
+        end = agent.heading
+    if start is None or end is None:
+        return None
+    return _heading_delta(start, end)
 
 
 def _lane_heading_change_from_stop(lane_polyline, stop_point, lookahead_m: float) -> float | None:
@@ -653,6 +702,8 @@ class RedLightCrossingTransitionOperator:
         max_heading_delta = args["max_heading_delta_rad"]
         max_lane_heading_change = args.get("max_lane_heading_change_rad")
         lane_lookahead = args.get("lane_heading_lookahead_m", max_after)
+        max_future_heading_change = args.get("max_future_heading_change_rad")
+        future_horizon = args.get("future_heading_horizon_seconds", 2.0)
 
         speed = _speed(subject)
         if speed < min_speed:
@@ -668,6 +719,22 @@ class RedLightCrossingTransitionOperator:
                 frame.frame.step_index, frame.frame.timestamp_seconds,
                 False, {},
             )
+
+        future_heading_change = None
+        if max_future_heading_change is not None:
+            future_heading_change = _agent_heading_change_after(
+                context, frame, subject.track_id, future_horizon
+            )
+            if (
+                future_heading_change is not None
+                and future_heading_change > max_future_heading_change
+            ):
+                return OperatorResult(
+                    self.name, "agent", subject.track_id,
+                    frame.frame.step_index, frame.frame.timestamp_seconds,
+                    False,
+                    {"future_heading_change_rad": future_heading_change},
+                )
 
         # Check current frame: SDC must be AFTER a red-light stop line
         current_reds = _find_red_light_and_lane(context, frame)
@@ -745,6 +812,7 @@ class RedLightCrossingTransitionOperator:
                                     if max_lane_heading_change is not None
                                     else None
                                 ),
+                                "future_heading_change_rad": future_heading_change,
                             },
                         )
 
@@ -865,6 +933,7 @@ class SdcRepeatedLaneChangeOperator:
         max_heading = args["max_heading_delta_rad"]
         min_speed = args.get("min_speed_mps", 0.0)
         min_stable_frames = args.get("min_stable_frames", 2)
+        min_lateral_displacement = args.get("min_lateral_displacement_m", 0.0)
 
         speed = _speed(subject)
         if speed < min_speed:
@@ -911,6 +980,45 @@ class SdcRepeatedLaneChangeOperator:
                 run_start = i
 
         stable_lane_sequence = [run[0][2] for run in stable_runs]
+        lateral_displacement = 0.0
+        if stable_runs:
+            first_frame_index = stable_runs[0][0][0]
+            last_frame_index = stable_runs[-1][-1][0]
+            first_agent = None
+            last_agent = None
+            for af in context.input_frames:
+                if af.frame.step_index not in (first_frame_index, last_frame_index):
+                    continue
+                agent = next(
+                    (a for a in af.frame.agent_states if a.track_id == subject.track_id and a.valid),
+                    None,
+                )
+                if agent is None:
+                    continue
+                if af.frame.step_index == first_frame_index:
+                    first_agent = agent
+                if af.frame.step_index == last_frame_index:
+                    last_agent = agent
+            if first_agent is not None and last_agent is not None:
+                dx = last_agent.center.x - first_agent.center.x
+                dy = last_agent.center.y - first_agent.center.y
+                _, lateral_displacement = _rotate(dx, dy, first_agent.heading)
+                lateral_displacement = abs(lateral_displacement)
+
+        if lateral_displacement < min_lateral_displacement:
+            return OperatorResult(
+                self.name, "agent", subject.track_id,
+                frame.frame.step_index, frame.frame.timestamp_seconds,
+                False,
+                {
+                    "lane_sequence": [m[2] for m in matched],
+                    "stable_lane_sequence": stable_lane_sequence,
+                    "lateral_displacement_m": lateral_displacement,
+                    "min_lateral_displacement_m": min_lateral_displacement,
+                    "matched_frame_indices": [m[0] for m in matched],
+                    "matched_timestamps_seconds": [m[1] for m in matched],
+                },
+            )
         topological_lane_sequence = []
         for lane_id in stable_lane_sequence:
             if not topological_lane_sequence:
@@ -940,6 +1048,7 @@ class SdcRepeatedLaneChangeOperator:
                 "topological_lane_sequence": topological_lane_sequence,
                 "lane_change_count": lane_change_count,
                 "min_stable_frames": min_stable_frames,
+                "lateral_displacement_m": lateral_displacement,
                 "matched_frame_indices": [m[0] for m in matched],
                 "matched_timestamps_seconds": [m[1] for m in matched],
             },
@@ -1046,6 +1155,7 @@ def register_builtin_operators(registry: OperatorRegistry) -> None:
         LateralGapBetweenOperator(),
         SamePathOverlapOperator(),
         PairEgoSpeedAboveOperator(),
+        PairOtherSpeedAboveOperator(),
         RedLightBeforeStopLineOperator(),
         RedLightAfterStopLineOperator(),
         RedLightCrossingTransitionOperator(),

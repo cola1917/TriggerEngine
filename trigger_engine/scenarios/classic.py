@@ -157,6 +157,9 @@ rules:
         - operator: predicate.pair_ego_speed_above
           args:
             threshold_mps: 0.5
+        - operator: predicate.pair_other_speed_above
+          args:
+            threshold_mps: 0.5
         - operator: predicate.lateral_gap_between
           args:
             min_lateral_m: 1.0
@@ -313,6 +316,8 @@ rules:
             max_heading_delta_rad: 0.7
             max_lane_heading_change_rad: 0.35
             lane_heading_lookahead_m: 15.0
+            max_future_heading_change_rad: 0.25
+            future_heading_horizon_seconds: 2.0
     emit:
       tag: red_light_stop_line_crossed
       intent: supporting
@@ -335,9 +340,16 @@ rules:
             max_heading_delta_rad: 0.7
             max_lane_heading_change_rad: 0.35
             lane_heading_lookahead_m: 15.0
+            max_future_heading_change_rad: 0.25
+            future_heading_horizon_seconds: 2.0
     emit:
       tag: red_light_running
       intent: review
+      policy:
+        cooldown_frames: 30
+        episode:
+          by: subject
+          mode: interval
 
   # --- SDC Repeated Lane Change ---
   - id: sdc_repeated_lane_change
@@ -356,6 +368,7 @@ rules:
             max_heading_delta_rad: 0.7
             min_speed_mps: 2.0
             min_stable_frames: 2
+            min_lateral_displacement_m: 2.5
     emit:
       tag: sdc_repeated_lane_change
       intent: review
