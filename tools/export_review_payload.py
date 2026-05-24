@@ -21,6 +21,8 @@ def main(argv=None) -> int:
     parser.add_argument("--scenario-index", type=int, default=0, help="Scenario index in the shard")
     parser.add_argument("--scenario-id", default=None, help="Scenario id to export")
     parser.add_argument("--map-feature-limit", type=int, default=500, help="Maximum map features to embed")
+    parser.add_argument("--future-frames", type=int, default=0, help="Number of future playback frames to include")
+    parser.add_argument("--map-crop-margin-m", type=float, default=0.0, help="Map crop margin in meters around agent bounds")
     args = parser.parse_args(argv)
 
     output = export_review_payload(
@@ -29,6 +31,8 @@ def main(argv=None) -> int:
         scenario_index=args.scenario_index,
         scenario_id=args.scenario_id,
         map_feature_limit=args.map_feature_limit,
+        playback_future_frames=args.future_frames,
+        map_crop_margin_m=args.map_crop_margin_m,
     )
     print(output)
     return 0
