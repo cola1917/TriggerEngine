@@ -4,8 +4,11 @@ import yaml
 
 from .ast import (
     AllCondition,
+    EventCompactionPolicy,
     EventPolicy,
     OperatorCall,
+    PairConfig,
+    ReviewEpisodePolicy,
     Rule,
     RuleEmit,
     RuleSet,
@@ -13,6 +16,7 @@ from .ast import (
     SequenceStep,
     SequenceTagCondition,
     SustainedTagCondition,
+    _VALID_INTENTS,
 )
 
 
@@ -20,7 +24,7 @@ class RuleParseError(Exception):
     pass
 
 
-_VALID_SUBJECTS = {"frame", "agent", "lane", "scenario", "agent_pair"}
+_VALID_SUBJECTS = {"frame", "agent", "lane", "scenario", "agent_pair", "sdc_agent", "sdc_pair"}
 
 
 class RuleParser:
@@ -101,14 +105,23 @@ class RuleParser:
         if not isinstance(metadata, dict):
             raise RuleParseError(f"rules[{index}].emit.metadata must be a dict")
 
-        policy = self._parse_policy(emit_raw, index)
+        intent = emit_raw.get("intent", "debug")
+        if intent not in _VALID_INTENTS:
+            raise RuleParseError(
+                f"rules[{index}].emit.intent must be one of {_VALID_INTENTS}, got '{intent}'"
+            )
+
+        policy = self._parse_policy(emit_raw, index, intent)
 
         emit = RuleEmit(
             tag_name=tag_name,
             value=emit_raw.get("value", True),
             metadata=metadata,
             policy=policy,
+            intent=intent,
         )
+
+        pair = self._parse_pair(raw, subject, index)
 
         return Rule(
             rule_id=rule_id,
@@ -118,6 +131,7 @@ class RuleParser:
             kind=kind,
             description=description,
             window=window,
+            pair=pair,
         )
 
     def _parse_temporal_condition(
@@ -257,7 +271,7 @@ class RuleParser:
 
         return AllCondition(calls=tuple(calls))
 
-    def _parse_policy(self, emit_raw: dict, rule_index: int) -> EventPolicy:
+    def _parse_policy(self, emit_raw: dict, rule_index: int, intent: str = "debug") -> EventPolicy:
         policy_raw = emit_raw.get("policy")
         if policy_raw is None:
             return EventPolicy()
@@ -265,7 +279,7 @@ class RuleParser:
         if not isinstance(policy_raw, dict):
             raise RuleParseError(f"rules[{rule_index}].emit.policy must be a dict")
 
-        valid_keys = {"cooldown_frames"}
+        valid_keys = {"cooldown_frames", "compact", "episode"}
         unknown = set(policy_raw.keys()) - valid_keys
         if unknown:
             raise RuleParseError(
@@ -278,4 +292,107 @@ class RuleParser:
                 f"rules[{rule_index}].emit.policy.cooldown_frames must be a non-negative integer"
             )
 
-        return EventPolicy(cooldown_frames=cooldown)
+        compact = self._parse_compact(policy_raw, rule_index, intent)
+        episode = self._parse_episode(policy_raw, rule_index, intent)
+
+        return EventPolicy(cooldown_frames=cooldown, compact=compact, episode=episode)
+
+    def _parse_compact(
+        self, policy_raw: dict, rule_index: int, intent: str
+    ) -> EventCompactionPolicy | None:
+        compact_raw = policy_raw.get("compact")
+        if compact_raw is None:
+            return None
+
+        if intent == "review":
+            raise RuleParseError(
+                f"rules[{rule_index}].emit.policy.compact is not allowed with intent 'review'"
+            )
+
+        if not isinstance(compact_raw, dict):
+            raise RuleParseError(f"rules[{rule_index}].emit.policy.compact must be a dict")
+
+        by = compact_raw.get("by", "subject")
+        if by != "subject":
+            raise RuleParseError(
+                f"rules[{rule_index}].emit.policy.compact.by must be 'subject', got '{by}'"
+            )
+
+        mode = compact_raw.get("mode", "interval")
+        if mode != "interval":
+            raise RuleParseError(
+                f"rules[{rule_index}].emit.policy.compact.mode must be 'interval', got '{mode}'"
+            )
+
+        valid_keys = {"by", "mode"}
+        unknown = set(compact_raw.keys()) - valid_keys
+        if unknown:
+            raise RuleParseError(
+                f"rules[{rule_index}].emit.policy.compact has unknown keys: {unknown}"
+            )
+
+        return EventCompactionPolicy(by=by, mode=mode)
+
+    def _parse_episode(
+        self, policy_raw: dict, rule_index: int, intent: str
+    ) -> ReviewEpisodePolicy | None:
+        episode_raw = policy_raw.get("episode")
+        if episode_raw is None:
+            return None
+
+        if intent != "review":
+            raise RuleParseError(
+                f"rules[{rule_index}].emit.policy.episode is only allowed with intent 'review'"
+            )
+
+        if not isinstance(episode_raw, dict):
+            raise RuleParseError(f"rules[{rule_index}].emit.policy.episode must be a dict")
+
+        by = episode_raw.get("by", "subject")
+        if by != "subject":
+            raise RuleParseError(
+                f"rules[{rule_index}].emit.policy.episode.by must be 'subject', got '{by}'"
+            )
+
+        mode = episode_raw.get("mode", "interval")
+        if mode != "interval":
+            raise RuleParseError(
+                f"rules[{rule_index}].emit.policy.episode.mode must be 'interval', got '{mode}'"
+            )
+
+        valid_keys = {"by", "mode"}
+        unknown = set(episode_raw.keys()) - valid_keys
+        if unknown:
+            raise RuleParseError(
+                f"rules[{rule_index}].emit.policy.episode has unknown keys: {unknown}"
+            )
+
+        return ReviewEpisodePolicy(by=by, mode=mode)
+
+    def _parse_pair(self, raw: dict, subject: str, rule_index: int) -> PairConfig:
+        pair_raw = raw.get("pair")
+        if pair_raw is None:
+            return PairConfig()
+
+        if subject != "agent_pair":
+            raise RuleParseError(
+                f"rules[{rule_index}].pair is only allowed for subject 'agent_pair', got '{subject}'"
+            )
+
+        if not isinstance(pair_raw, dict):
+            raise RuleParseError(f"rules[{rule_index}].pair must be a dict")
+
+        mode = pair_raw.get("mode", "directed")
+        if mode not in ("directed", "unordered"):
+            raise RuleParseError(
+                f"rules[{rule_index}].pair.mode must be 'directed' or 'unordered', got '{mode}'"
+            )
+
+        valid_keys = {"mode"}
+        unknown = set(pair_raw.keys()) - valid_keys
+        if unknown:
+            raise RuleParseError(
+                f"rules[{rule_index}].pair has unknown keys: {unknown}"
+            )
+
+        return PairConfig(mode=mode)

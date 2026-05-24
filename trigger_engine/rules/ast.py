@@ -34,8 +34,25 @@ class SequenceTagCondition:
 
 
 @dataclass(frozen=True)
+class EventCompactionPolicy:
+    by: str = "subject"
+    mode: str = "interval"
+
+
+@dataclass(frozen=True)
+class ReviewEpisodePolicy:
+    by: str = "subject"
+    mode: str = "interval"
+
+
+@dataclass(frozen=True)
 class EventPolicy:
     cooldown_frames: int = 0
+    compact: EventCompactionPolicy | None = None
+    episode: ReviewEpisodePolicy | None = None
+
+
+_VALID_INTENTS = frozenset({"review", "supporting", "debug"})
 
 
 @dataclass(frozen=True)
@@ -44,6 +61,12 @@ class RuleEmit:
     value: bool | int | float | str = True
     metadata: dict[str, object] = field(default_factory=dict)
     policy: EventPolicy = field(default_factory=EventPolicy)
+    intent: str = "debug"
+
+
+@dataclass(frozen=True)
+class PairConfig:
+    mode: str = "directed"
 
 
 @dataclass(frozen=True)
@@ -60,6 +83,7 @@ class Rule:
     kind: str = "single_frame"
     description: str | None = None
     window: RuleWindow | None = None
+    pair: PairConfig = field(default_factory=PairConfig)
 
 
 @dataclass(frozen=True)

@@ -24,6 +24,9 @@ class ExecutionPlan:
     operator_names: tuple[str, ...]
 
 
+_SDC_COMPATIBLE = {"sdc_agent": "agent", "sdc_pair": "agent_pair"}
+
+
 class RuleCompiler:
     def compile(
         self,
@@ -48,7 +51,8 @@ class RuleCompiler:
                         op = operator_registry.get(call.operator_name)
                     except OperatorRegistryError as exc:
                         raise RuleCompileError(str(exc)) from exc
-                    if op.subject_type != rule.subject_type:
+                    compatible_type = _SDC_COMPATIBLE.get(rule.subject_type, rule.subject_type)
+                    if op.subject_type != compatible_type:
                         raise RuleCompileError(
                             f"Operator '{op.name}' subject_type='{op.subject_type}' "
                             f"does not match rule '{rule.rule_id}' subject_type='{rule.subject_type}'"
