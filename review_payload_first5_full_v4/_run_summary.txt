@@ -1,0 +1,12 @@
+run_type=full_current_code
+total_scenarios=1445
+review_scenarios=1
+review_event_counts={"cut_in_confirmed": 1}
+files:
+  validation_interactive.tfrecord-00000-of-00150: scenarios=282, review_scenarios=0
+  validation_interactive.tfrecord-00001-of-00150: scenarios=294, review_scenarios=0
+  validation_interactive.tfrecord-00002-of-00150: scenarios=274, review_scenarios=0
+  validation_interactive.tfrecord-00003-of-00150: scenarios=307, review_scenarios=1
+  validation_interactive.tfrecord-00004-of-00150: scenarios=288, review_scenarios=0
+review_payloads:
+  review_payload_00003_s0086.json
