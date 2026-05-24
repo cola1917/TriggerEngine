@@ -62,6 +62,8 @@ def cut_in_context():
         future_frames=(),
         input_frames=frames,
         source="unit",
+        sdc_track_index=1,
+        sdc_track_id=1,
     )
 
 
@@ -195,10 +197,53 @@ class CutInSequenceContractTests(unittest.TestCase):
             operator_names,
             [
                 "predicate.pair_types_are",
+                "predicate.pair_ego_speed_above",
                 "predicate.lateral_gap_between",
                 "predicate.lateral_motion_toward",
+                "predicate.heading_converging",
             ],
         )
+
+    def test_classic_cut_in_lateral_approach_requires_near_aligned_heading(self):
+        from trigger_engine.engine.registry import RuleRegistry
+        from trigger_engine.engine.trigger_engine import TriggerEngine
+        from trigger_engine.operators.registry import OperatorRegistry
+        from trigger_engine.scenarios.classic import register_classic_scenario_pack
+
+        ego_0 = agent(1, x=0.0, y=0.0, vx=3.0, heading=0.0)
+        ego_1 = agent(1, x=0.3, y=0.0, vx=3.0, heading=0.0)
+        ego_2 = agent(1, x=0.6, y=0.0, vx=3.0, heading=0.0)
+        target_0 = agent(2, x=8.0, y=3.0, vx=0.0, vy=-3.0, heading=-1.57)
+        target_1 = agent(2, x=8.0, y=1.8, vx=0.0, vy=-3.0, heading=-1.57)
+        target_2 = agent(2, x=8.0, y=0.6, vx=0.0, vy=-3.0, heading=-1.57)
+        frames = (
+            aligned_frame(0, (ego_0, target_0)),
+            aligned_frame(1, (ego_1, target_1)),
+            aligned_frame(2, (ego_2, target_2)),
+        )
+        context = AlignmentContext(
+            scenario_id="scenario-crossing-not-cut-in",
+            watermark=Watermark("scenario-crossing-not-cut-in", 2, 0.2),
+            observed_frames=frames[:2],
+            current_frame=frames[2],
+            future_frames=(),
+            input_frames=frames,
+            source="unit",
+            sdc_track_index=1,
+            sdc_track_id=1,
+        )
+
+        operators = OperatorRegistry()
+        rules = RuleRegistry(operator_registry=operators)
+        register_classic_scenario_pack(operators, rules)
+
+        result = TriggerEngine(operators, rules).evaluate(context)
+        tags = {event.tag_name for event in result.events if event.subject_id == "1:2"}
+
+        self.assertIn("adjacent_vehicle", tags)
+        self.assertNotIn("cut_in_lateral_approach", tags)
+        self.assertNotIn("cut_in_confirmed", tags)
+        self.assertNotIn("cut_in_risk", tags)
 
     def test_classic_pack_emits_cut_in_sequence_tags(self):
         from trigger_engine.engine.registry import RuleRegistry
@@ -218,18 +263,12 @@ class CutInSequenceContractTests(unittest.TestCase):
         self.assertIn("cut_in_lateral_approach", tags)
         self.assertIn("same_path_overlap", tags)
         self.assertIn("low_ttc_pair", tags)
-        self.assertIn("cut_in_confirmed", tags)
         self.assertIn("cut_in_risk", tags)
+        self.assertNotIn("cut_in_confirmed", tags)
 
-        sequence_events = [
-            event
-            for event in events
-            if event.tag_name in {"cut_in_confirmed", "cut_in_risk"}
-        ]
-        self.assertTrue(sequence_events)
-        for event in sequence_events:
-            self.assertEqual(event.metadata["temporal_kind"], "sequence")
-            self.assertEqual(event.subject_type, "agent_pair")
+        risk_event = next(e for e in events if e.tag_name == "cut_in_risk")
+        self.assertEqual(risk_event.metadata["temporal_kind"], "sequence")
+        self.assertEqual(risk_event.subject_type, "sdc_pair")
 
     def test_classic_pair_rules_do_not_require_unbounded_pair_cache(self):
         from trigger_engine.engine.registry import RuleRegistry

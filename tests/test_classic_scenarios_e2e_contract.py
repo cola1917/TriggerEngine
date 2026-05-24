@@ -56,6 +56,30 @@ def make_context():
         future_frames=(future,),
         input_frames=frames,
         source="unit",
+        sdc_track_index=20,
+        sdc_track_id=20,
+    )
+
+
+def make_stopped_sdc_context():
+    ego = agent(20, x=1.0, y=0.0, vx=0.1, heading=0.0)
+    other = agent(21, x=10.0, y=0.0, vx=0.0, heading=0.0)
+    red_light = TrafficLightState(lane_id=7, state="stop", stop_point=Point3D(1.0, 0.0, 0.0))
+    frames = (
+        frame(0, (ego, other), (red_light,)),
+        frame(1, (ego, other), (red_light,)),
+        frame(2, (ego, other), (red_light,)),
+    )
+    return AlignmentContext(
+        scenario_id="scenario-stopped-sdc",
+        watermark=Watermark("scenario-stopped-sdc", 2, 0.2),
+        observed_frames=frames[:2],
+        current_frame=frames[2],
+        future_frames=(),
+        input_frames=frames,
+        source="unit",
+        sdc_track_index=20,
+        sdc_track_id=20,
     )
 
 
@@ -74,15 +98,32 @@ class ClassicScenariosE2EContractTests(unittest.TestCase):
         result = engine.evaluate(make_context())
         tags = {event.tag_name for event in result.events}
 
-        self.assertIn("vehicle_stopped", tags)
-        self.assertIn("vehicle_stopped_for_3_frames", tags)
         self.assertIn("low_ttc_pair", tags)
         self.assertIn("persistent_low_ttc_pair", tags)
         self.assertIn("cut_in_candidate", tags)
         self.assertIn("cut_in_developing", tags)
-        self.assertIn("vehicle_stopped_at_red", tags)
-        self.assertIn("vehicle_still_stopped_at_red", tags)
         self.assertNotIn(999, [event.subject_id for event in result.events])
+
+    def test_classic_pack_outputs_sdc_stopped_tags_only_for_sdc(self):
+        from trigger_engine.engine.registry import RuleRegistry
+        from trigger_engine.engine.trigger_engine import TriggerEngine
+        from trigger_engine.operators.registry import OperatorRegistry
+        from trigger_engine.scenarios.classic import register_classic_scenario_pack
+
+        operators = OperatorRegistry()
+        rules = RuleRegistry(operator_registry=operators)
+        register_classic_scenario_pack(operators, rules)
+        engine = TriggerEngine(operator_registry=operators, rule_registry=rules)
+
+        result = engine.evaluate(make_stopped_sdc_context())
+        tags = {event.tag_name for event in result.events}
+        subject_ids = {event.subject_id for event in result.events if event.tag_name.startswith("sdc_vehicle")}
+
+        self.assertIn("sdc_vehicle_stopped", tags)
+        self.assertIn("sdc_vehicle_stopped_for_3_frames", tags)
+        self.assertIn("sdc_vehicle_stopped_at_red", tags)
+        self.assertIn("sdc_vehicle_still_stopped_at_red", tags)
+        self.assertEqual(subject_ids, {20})
 
 
 if __name__ == "__main__":

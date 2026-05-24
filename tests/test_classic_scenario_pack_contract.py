@@ -14,7 +14,7 @@ class ClassicScenarioPackContractTests(unittest.TestCase):
         rule_registry = RuleRegistry(operator_registry=operator_registry)
         plan = register_classic_scenario_pack(operator_registry, rule_registry, "classic_v1")
 
-        self.assertIn("vehicle_stopped", CLASSIC_SCENARIO_RULES_YAML)
+        self.assertIn("sdc_vehicle_stopped", CLASSIC_SCENARIO_RULES_YAML)
         self.assertEqual(plan.plan_id, "classic_v1")
         self.assertGreaterEqual(len(plan.single_frame_rules), 4)
         self.assertGreaterEqual(len(plan.temporal_rules), 4)
