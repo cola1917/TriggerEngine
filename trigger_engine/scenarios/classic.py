@@ -311,6 +311,8 @@ rules:
             max_after_stop_line_m: 15.0
             min_speed_mps: 0.5
             max_heading_delta_rad: 0.7
+            max_lane_heading_change_rad: 0.35
+            lane_heading_lookahead_m: 15.0
     emit:
       tag: red_light_stop_line_crossed
       intent: supporting
@@ -331,6 +333,8 @@ rules:
             max_after_stop_line_m: 15.0
             min_speed_mps: 0.5
             max_heading_delta_rad: 0.7
+            max_lane_heading_change_rad: 0.35
+            lane_heading_lookahead_m: 15.0
     emit:
       tag: red_light_running
       intent: review
@@ -351,6 +355,7 @@ rules:
             max_lateral_m: 1.5
             max_heading_delta_rad: 0.7
             min_speed_mps: 2.0
+            min_stable_frames: 2
     emit:
       tag: sdc_repeated_lane_change
       intent: review

@@ -417,6 +417,80 @@ def _lane_direction_at_stop(lane_polyline, stop_point) -> tuple[float, float] | 
     return best_dir
 
 
+def _heading_delta(a: float, b: float) -> float:
+    delta = abs(a - b)
+    if delta > math.pi:
+        delta = 2 * math.pi - delta
+    return delta
+
+
+def _lane_heading_change_from_stop(lane_polyline, stop_point, lookahead_m: float) -> float | None:
+    if len(lane_polyline) < 2:
+        return None
+
+    best_index = None
+    best_dist = float("inf")
+    for i in range(len(lane_polyline) - 1):
+        ax, ay = lane_polyline[i].x, lane_polyline[i].y
+        bx, by = lane_polyline[i + 1].x, lane_polyline[i + 1].y
+        mx, my = (ax + bx) / 2.0, (ay + by) / 2.0
+        dist = math.sqrt((mx - stop_point.x) ** 2 + (my - stop_point.y) ** 2)
+        if dist < best_dist:
+            best_dist = dist
+            best_index = i
+
+    if best_index is None:
+        return None
+
+    def segment_heading(index: int) -> float | None:
+        ax, ay = lane_polyline[index].x, lane_polyline[index].y
+        bx, by = lane_polyline[index + 1].x, lane_polyline[index + 1].y
+        if ax == bx and ay == by:
+            return None
+        return math.atan2(by - ay, bx - ax)
+
+    start_heading = segment_heading(best_index)
+    if start_heading is None:
+        return None
+
+    walked = 0.0
+    end_heading = start_heading
+    for i in range(best_index, len(lane_polyline) - 1):
+        ax, ay = lane_polyline[i].x, lane_polyline[i].y
+        bx, by = lane_polyline[i + 1].x, lane_polyline[i + 1].y
+        seg_len = math.sqrt((bx - ax) ** 2 + (by - ay) ** 2)
+        heading = segment_heading(i)
+        if heading is not None:
+            end_heading = heading
+        walked += seg_len
+        if walked >= lookahead_m:
+            break
+
+    return _heading_delta(start_heading, end_heading)
+
+
+def _lane_ids(values) -> set[int]:
+    return {int(value) for value in values or ()}
+
+
+def _are_longitudinally_connected(map_features, from_lane_id: int, to_lane_id: int) -> bool:
+    if from_lane_id == to_lane_id:
+        return True
+    from_lane = map_features.get(from_lane_id)
+    to_lane = map_features.get(to_lane_id)
+    if from_lane is None or to_lane is None:
+        return False
+
+    from_props = from_lane.properties or {}
+    to_props = to_lane.properties or {}
+    return (
+        to_lane_id in _lane_ids(from_props.get("exit_lanes"))
+        or from_lane_id in _lane_ids(to_props.get("entry_lanes"))
+        or from_lane_id in _lane_ids(to_props.get("exit_lanes"))
+        or to_lane_id in _lane_ids(from_props.get("entry_lanes"))
+    )
+
+
 def _find_red_light_and_lane(context, frame):
     stop_states = {"stop", "arrow_stop"}
     map_features = getattr(context, "map_features", {}) if context is not None else {}
@@ -577,6 +651,8 @@ class RedLightCrossingTransitionOperator:
         max_after = args["max_after_stop_line_m"]
         min_speed = args["min_speed_mps"]
         max_heading_delta = args["max_heading_delta_rad"]
+        max_lane_heading_change = args.get("max_lane_heading_change_rad")
+        lane_lookahead = args.get("lane_heading_lookahead_m", max_after)
 
         speed = _speed(subject)
         if speed < min_speed:
@@ -615,6 +691,17 @@ class RedLightCrossingTransitionOperator:
 
             # Check earlier frames: SDC must have been BEFORE the SAME stop line
             current_lane_id = tl.lane_id
+            if max_lane_heading_change is not None:
+                lane = context.map_features.get(current_lane_id)
+                if lane is not None:
+                    lane_heading_change = _lane_heading_change_from_stop(
+                        lane.polyline, tl.stop_point, lane_lookahead
+                    )
+                    if (
+                        lane_heading_change is not None
+                        and lane_heading_change > max_lane_heading_change
+                    ):
+                        continue
             for earlier in context.input_frames:
                 if earlier.frame.step_index >= frame.frame.step_index:
                     break
@@ -649,6 +736,15 @@ class RedLightCrossingTransitionOperator:
                                 "longitudinal_after_m": lon_after,
                                 "lateral_m": lat,
                                 "before_frame_index": earlier.frame.step_index,
+                                "lane_heading_change_rad": (
+                                    _lane_heading_change_from_stop(
+                                        context.map_features[current_lane_id].polyline,
+                                        tl.stop_point,
+                                        lane_lookahead,
+                                    )
+                                    if max_lane_heading_change is not None
+                                    else None
+                                ),
                             },
                         )
 
@@ -768,6 +864,7 @@ class SdcRepeatedLaneChangeOperator:
         max_lateral = args["max_lateral_m"]
         max_heading = args["max_heading_delta_rad"]
         min_speed = args.get("min_speed_mps", 0.0)
+        min_stable_frames = args.get("min_stable_frames", 2)
 
         speed = _speed(subject)
         if speed < min_speed:
@@ -804,19 +901,45 @@ class SdcRepeatedLaneChangeOperator:
                 False, {"matched_frames": len(matched)},
             )
 
+        stable_runs = []
+        run_start = 0
+        for i in range(1, len(matched) + 1):
+            if i == len(matched) or matched[i][2] != matched[run_start][2]:
+                run = matched[run_start:i]
+                if len(run) >= min_stable_frames:
+                    stable_runs.append(run)
+                run_start = i
+
+        stable_lane_sequence = [run[0][2] for run in stable_runs]
+        topological_lane_sequence = []
+        for lane_id in stable_lane_sequence:
+            if not topological_lane_sequence:
+                topological_lane_sequence.append(lane_id)
+                continue
+            previous_lane_id = topological_lane_sequence[-1]
+            if _are_longitudinally_connected(
+                context.map_features, previous_lane_id, lane_id
+            ):
+                topological_lane_sequence[-1] = lane_id
+            else:
+                topological_lane_sequence.append(lane_id)
+
         lane_change_count = 0
-        for i in range(1, len(matched)):
-            if matched[i][2] != matched[i - 1][2]:
+        for i in range(1, len(topological_lane_sequence)):
+            if topological_lane_sequence[i] != topological_lane_sequence[i - 1]:
                 lane_change_count += 1
 
-        value = lane_change_count >= min_changes and matched[-1][2] != matched[-2][2]
+        value = lane_change_count >= min_changes
         return OperatorResult(
             self.name, "agent", subject.track_id,
             frame.frame.step_index, frame.frame.timestamp_seconds,
             value,
             {
                 "lane_sequence": [m[2] for m in matched],
+                "stable_lane_sequence": stable_lane_sequence,
+                "topological_lane_sequence": topological_lane_sequence,
                 "lane_change_count": lane_change_count,
+                "min_stable_frames": min_stable_frames,
                 "matched_frame_indices": [m[0] for m in matched],
                 "matched_timestamps_seconds": [m[1] for m in matched],
             },

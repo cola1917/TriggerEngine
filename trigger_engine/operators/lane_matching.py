@@ -20,13 +20,14 @@ def match_agent_to_lane(
     *,
     max_lateral_m: float,
     max_heading_delta_rad: float,
+    heading_weight_m_per_rad: float = 3.0,
 ) -> LaneMatch | None:
     if not agent.valid:
         return None
 
     ax, ay = agent.center.x, agent.center.y
     best: LaneMatch | None = None
-    best_lat = float("inf")
+    best_score = float("inf")
 
     for feature in map_features.values():
         if feature.feature_type != "lane":
@@ -51,15 +52,16 @@ def match_agent_to_lane(
             proj_y = y0 + t * seg_dy
             lat = math.sqrt((ax - proj_x) ** 2 + (ay - proj_y) ** 2)
 
-            if lat < best_lat:
-                seg_heading = math.atan2(seg_dy, seg_dx)
-                heading_delta = abs(agent.heading - seg_heading)
-                if heading_delta > math.pi:
-                    heading_delta = 2 * math.pi - heading_delta
+            seg_heading = math.atan2(seg_dy, seg_dx)
+            heading_delta = abs(agent.heading - seg_heading)
+            if heading_delta > math.pi:
+                heading_delta = 2 * math.pi - heading_delta
 
-                if lat <= max_lateral_m and heading_delta <= max_heading_delta_rad:
+            if lat <= max_lateral_m and heading_delta <= max_heading_delta_rad:
+                score = lat + heading_weight_m_per_rad * heading_delta
+                if score < best_score:
                     props = feature.properties or {}
-                    best_lat = lat
+                    best_score = score
                     best = LaneMatch(
                         lane_id=feature.feature_id,
                         lateral_m=lat,

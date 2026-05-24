@@ -34,17 +34,32 @@ def lane(feature_id, y, lane_type="surface_street", speed_limit_mph=35.0):
     )
 
 
+def lane_segment(feature_id, x0, x1, y=0.0, entry_lanes=(), exit_lanes=()):
+    return MapFeature(
+        feature_id=feature_id,
+        feature_type="lane",
+        polyline=(Point3D(x0, y, 0.0), Point3D(x1, y, 0.0)),
+        polygon=(),
+        properties={
+            "lane_type": "surface_street",
+            "speed_limit_mph": 35.0,
+            "entry_lanes": tuple(entry_lanes),
+            "exit_lanes": tuple(exit_lanes),
+        },
+    )
+
+
 def aligned_frame(step_index, sdc):
     return AlignedFrame(
         frame=Frame(
             scenario_id="scenario-sdc-repeated-lane-change",
             step_index=step_index,
             timestamp_seconds=step_index * 0.5,
-            phase="current" if step_index == 4 else "history",
+            phase="current" if step_index >= 4 else "history",
             agent_states=(sdc,),
             traffic_lights=(),
         ),
-        visibility="current" if step_index == 4 else "observed",
+        visibility="current" if step_index >= 4 else "observed",
         available_modalities=frozenset({"agents", "valid_agents", "map"}),
     )
 
@@ -116,6 +131,7 @@ class SdcRepeatedLaneChangeContractTests(unittest.TestCase):
             aligned_frame(2, agent(1, x=8.0, y=3.5)),
             aligned_frame(3, agent(1, x=12.0, y=3.6)),
             aligned_frame(4, agent(1, x=16.0, y=7.0)),
+            aligned_frame(5, agent(1, x=20.0, y=7.1)),
         )
 
         result = classic_engine().evaluate(context(frames))
@@ -126,6 +142,40 @@ class SdcRepeatedLaneChangeContractTests(unittest.TestCase):
 
         self.assertEqual(len(review_events), 1)
         self.assertEqual(review_events[0].metadata["intent"], "review")
+
+    def test_sdc_repeated_lane_change_ignores_unstable_single_frame_lane_jump(self):
+        frames = (
+            aligned_frame(0, agent(1, x=0.0, y=0.0)),
+            aligned_frame(1, agent(1, x=4.0, y=0.1)),
+            aligned_frame(2, agent(1, x=8.0, y=3.5)),
+            aligned_frame(3, agent(1, x=12.0, y=3.6)),
+            aligned_frame(4, agent(1, x=16.0, y=7.0)),
+        )
+
+        result = classic_engine().evaluate(context(frames))
+        review_tags = {event.tag_name for event in result.events if event.metadata.get("intent") == "review"}
+
+        self.assertNotIn("sdc_repeated_lane_change", review_tags)
+
+    def test_sdc_repeated_lane_change_ignores_longitudinal_lane_segment_transitions(self):
+        frames = (
+            aligned_frame(0, agent(1, x=0.0, y=0.0)),
+            aligned_frame(1, agent(1, x=4.0, y=0.0)),
+            aligned_frame(2, agent(1, x=8.0, y=0.0)),
+            aligned_frame(3, agent(1, x=12.0, y=0.0)),
+            aligned_frame(4, agent(1, x=16.0, y=0.0)),
+            aligned_frame(5, agent(1, x=20.0, y=0.0)),
+        )
+        map_features = {
+            10: lane_segment(10, -5.0, 7.0, exit_lanes=(11,)),
+            11: lane_segment(11, 7.0, 15.0, entry_lanes=(10,), exit_lanes=(12,)),
+            12: lane_segment(12, 15.0, 25.0, entry_lanes=(11,)),
+        }
+
+        result = classic_engine().evaluate(context(frames, map_features=map_features))
+        review_tags = {event.tag_name for event in result.events if event.metadata.get("intent") == "review"}
+
+        self.assertNotIn("sdc_repeated_lane_change", review_tags)
 
     def test_sdc_single_lane_change_does_not_emit_repeated_lane_change(self):
         frames = (
