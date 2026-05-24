@@ -1,0 +1,55 @@
+{
+  "total_scenarios": 1445,
+  "review_scenarios": 1,
+  "review_event_counts": {
+    "cut_in_confirmed": 1
+  },
+  "seconds": 44.20573810010683,
+  "scenarios_per_second": 32.68806408633426,
+  "timings": {
+    "adapter_seconds": 59.646556400111876,
+    "alignment_seconds": 4.04075320251286,
+    "engine_seconds": 47.80619129980914
+  },
+  "files": {
+    "validation_interactive.tfrecord-00000-of-00150": {
+      "scenarios": 282,
+      "review_scenarios": 0,
+      "seconds": 22.7531138000777
+    },
+    "validation_interactive.tfrecord-00001-of-00150": {
+      "scenarios": 294,
+      "review_scenarios": 0,
+      "seconds": 23.907677700044587
+    },
+    "validation_interactive.tfrecord-00002-of-00150": {
+      "scenarios": 274,
+      "review_scenarios": 0,
+      "seconds": 22.29473720001988
+    },
+    "validation_interactive.tfrecord-00003-of-00150": {
+      "scenarios": 307,
+      "review_scenarios": 1,
+      "seconds": 24.10402939992491
+    },
+    "validation_interactive.tfrecord-00004-of-00150": {
+      "scenarios": 288,
+      "review_scenarios": 0,
+      "seconds": 21.657155900029466
+    }
+  },
+  "review_scenario_refs": [
+    {
+      "source": "data\\validation_interactive.tfrecord-00003-of-00150",
+      "scenario_index": 86,
+      "scenario_id": "87777508fd1e5953",
+      "review_tags": [
+        "cut_in_confirmed"
+      ],
+      "payload_path": "review_payload_first5_inline_parallel\\review_payload_00003_s0086.json"
+    }
+  ],
+  "payload_outputs": [
+    "review_payload_first5_inline_parallel\\review_payload_00003_s0086.json"
+  ]
+}
