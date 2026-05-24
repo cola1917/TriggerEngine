@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Review Index</title>
+  <style>
+    body { margin: 0; font: 13px/1.4 system-ui, sans-serif; display: flex; height: 100vh; }
+    #reviewFileList { width: 340px; overflow: auto; border-right: 1px solid #d8dde6; background: #fff; }
+    .header { padding: 12px; border-bottom: 1px solid #d8dde6; font-weight: 650; }
+    .row { padding: 8px 12px; border-bottom: 1px solid #eee; cursor: pointer; }
+    .row:hover { background: #f0fdfa; }
+    .row .name { font-weight: 600; }
+    .row .meta { color: #64748b; font-size: 11px; margin-top: 2px; }
+    #viewerFrame { flex: 1; border: none; }
+  </style>
+</head>
+<body>
+  <div id="reviewFileList">
+    <div class="header">Review Files (1 / 3) | 1 events</div>
+    <div class="row" data-file="review_payload_00035.json" onclick="selectFile(0)"><div class="name">review_payload_00035.json</div><div class="meta">f0ab4abb805b3c90</div><div class="meta">cut_in_confirmed | 1 events</div></div>
+
+  </div>
+  <iframe id="viewerFrame" src="review_viewers\review_payload_00035.html"></iframe>
+  <script id="reviewFileIndex" type="application/json">{"payload_dir": "review_payload_lane_check", "files": [{"file": "review_payload_00035.json", "path": "review_payload_00035.json", "viewer_path": "review_viewers\\review_payload_00035.html", "scenario_id": "f0ab4abb805b3c90", "source": "data\\validation_interactive.tfrecord-00035-of-00150", "review_event_count": 1, "review_tag_counts": {"cut_in_confirmed": 1}, "review_tags": ["cut_in_confirmed"], "first_review_frame_index": 7, "first_review_timestamp_seconds": 0.7041, "total_events": 4}], "stats": {"payload_files": 3, "review_files": 1, "review_events": 1}, "diagnostics": []}</script>
+  <script>
+    function selectFile(i) {
+      const files = JSON.parse(document.getElementById('reviewFileIndex').textContent).files;
+      document.getElementById('viewerFrame').src = files[i].viewer_path;
+    }
+  </script>
+</body>
+</html>
