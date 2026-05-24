@@ -513,10 +513,22 @@ def render_viewer_html(payload: dict[str, object]) -> str:
       return {{egoId: Number(parts[0]), targetId: Number(parts[1])}};
     }}
 
-    function egoAgentForEvent(event, frame) {{
+    function egoIdForEvent(event) {{
+      if (!event) return null;
       const ids = pairRoleIds(event);
-      if (!ids) return null;
-      return (frame.agents || []).find(a => a.track_id === ids.egoId) || null;
+      if (ids) return ids.egoId;
+      const meta = event.metadata || {{}};
+      if (Number.isFinite(Number(meta.ego_id))) return Number(meta.ego_id);
+      if (event.subject_type === 'sdc_agent' || event.subject_type === 'agent') {{
+        if (Number.isFinite(Number(event.subject_id))) return Number(event.subject_id);
+      }}
+      return null;
+    }}
+
+    function egoAgentForEvent(event, frame) {{
+      const egoId = egoIdForEvent(event);
+      if (egoId === null) return null;
+      return (frame.agents || []).find(a => a.track_id === egoId) || null;
     }}
 
     function targetAgentForEvent(event, frame) {{
@@ -527,9 +539,12 @@ def render_viewer_html(payload: dict[str, object]) -> str:
 
     function roleForAgent(event, trackId) {{
       const ids = pairRoleIds(event);
-      if (!ids) return null;
-      if (trackId === ids.egoId) return 'EGO';
-      if (trackId === ids.targetId) return 'TARGET';
+      if (ids) {{
+        if (trackId === ids.egoId) return 'EGO';
+        if (trackId === ids.targetId) return 'TARGET';
+      }}
+      const egoId = egoIdForEvent(event);
+      if (egoId !== null && trackId === egoId) return 'EGO';
       return null;
     }}
 
@@ -646,7 +661,8 @@ def render_viewer_html(payload: dict[str, object]) -> str:
       if (isPairEvent(event) && typeof event.subject_id === 'string') {{
         return new Set(event.subject_id.split(':').map(Number));
       }}
-      if (event.subject_type === 'agent') return new Set([Number(event.subject_id)]);
+      const egoId = egoIdForEvent(event);
+      if (egoId !== null) return new Set([egoId]);
       return new Set();
     }}
 
