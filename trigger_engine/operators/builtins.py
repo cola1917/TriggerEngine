@@ -337,6 +337,30 @@ class LateralGapBetweenOperator:
         )
 
 
+class PairEgoSpeedAboveOperator:
+    name = "predicate.pair_ego_speed_above"
+    result_kind = "predicate"
+    subject_type = "agent_pair"
+
+    def evaluate(self, context, frame, subject, args):
+        if not subject.ego.valid:
+            return OperatorResult(
+                self.name, "agent_pair", subject.subject_id,
+                frame.frame.step_index, frame.frame.timestamp_seconds,
+                False,
+                {},
+            )
+        threshold = args["threshold_mps"]
+        speed = _speed(subject.ego)
+        value = speed > threshold
+        return OperatorResult(
+            self.name, "agent_pair", subject.subject_id,
+            frame.frame.step_index, frame.frame.timestamp_seconds,
+            value,
+            {"ego_speed_mps": speed, "threshold_mps": threshold},
+        )
+
+
 class SamePathOverlapOperator:
     name = "predicate.same_path_overlap"
     result_kind = "predicate"
@@ -534,6 +558,356 @@ class RedLightAfterStopLineOperator:
         )
 
 
+class RedLightCrossingTransitionOperator:
+    name = "predicate.red_light_crossing_transition"
+    result_kind = "predicate"
+    subject_type = "agent"
+
+    def evaluate(self, context, frame, subject, args):
+        if not subject.valid:
+            return OperatorResult(
+                self.name, "agent", subject.track_id,
+                frame.frame.step_index, frame.frame.timestamp_seconds,
+                False, {},
+            )
+
+        max_lat = args["max_lateral_m"]
+        max_before = args["max_before_stop_line_m"]
+        min_after = args["min_after_stop_line_m"]
+        max_after = args["max_after_stop_line_m"]
+        min_speed = args["min_speed_mps"]
+        max_heading_delta = args["max_heading_delta_rad"]
+
+        speed = _speed(subject)
+        if speed < min_speed:
+            return OperatorResult(
+                self.name, "agent", subject.track_id,
+                frame.frame.step_index, frame.frame.timestamp_seconds,
+                False, {"speed_mps": speed},
+            )
+
+        if context is None:
+            return OperatorResult(
+                self.name, "agent", subject.track_id,
+                frame.frame.step_index, frame.frame.timestamp_seconds,
+                False, {},
+            )
+
+        # Check current frame: SDC must be AFTER a red-light stop line
+        current_reds = _find_red_light_and_lane(context, frame)
+        for tl, (dir_x, dir_y) in current_reds:
+            dx = subject.center.x - tl.stop_point.x
+            dy = subject.center.y - tl.stop_point.y
+            lon_after = dx * dir_x + dy * dir_y
+            lat = -dx * dir_y + dy * dir_x
+            lat_abs = abs(lat)
+
+            heading_delta = abs(subject.heading - math.atan2(dir_y, dir_x))
+            if heading_delta > math.pi:
+                heading_delta = 2 * math.pi - heading_delta
+
+            if not (
+                lat_abs <= max_lat
+                and min_after <= lon_after <= max_after
+                and heading_delta <= max_heading_delta
+            ):
+                continue
+
+            # Check earlier frames: SDC must have been BEFORE the SAME stop line
+            current_lane_id = tl.lane_id
+            for earlier in context.input_frames:
+                if earlier.frame.step_index >= frame.frame.step_index:
+                    break
+                # Find the same agent in the earlier frame
+                earlier_agent = None
+                for a in earlier.frame.agent_states:
+                    if a.track_id == subject.track_id and a.valid:
+                        earlier_agent = a
+                        break
+                if earlier_agent is None:
+                    continue
+                for etl, (edir_x, edir_y) in _find_red_light_and_lane(context, earlier):
+                    if etl.lane_id != current_lane_id:
+                        continue
+                    edx = earlier_agent.center.x - etl.stop_point.x
+                    edy = earlier_agent.center.y - etl.stop_point.y
+                    lon_before = edx * edir_x + edy * edir_y
+                    lat_before = -edx * edir_y + edy * edir_x
+
+                    # Agent must be near this lane in the earlier frame
+                    if abs(lat_before) > max_lat:
+                        continue
+
+                    if -max_before <= lon_before < 0:
+                        return OperatorResult(
+                            self.name, "agent", subject.track_id,
+                            frame.frame.step_index, frame.frame.timestamp_seconds,
+                            True,
+                            {
+                                "lane_id": current_lane_id,
+                                "longitudinal_before_m": lon_before,
+                                "longitudinal_after_m": lon_after,
+                                "lateral_m": lat,
+                                "before_frame_index": earlier.frame.step_index,
+                            },
+                        )
+
+        return OperatorResult(
+            self.name, "agent", subject.track_id,
+            frame.frame.step_index, frame.frame.timestamp_seconds,
+            False, {},
+        )
+
+
+class SdcLaneChangedOperator:
+    name = "predicate.sdc_lane_changed"
+    result_kind = "predicate"
+    subject_type = "agent"
+
+    def evaluate(self, context, frame, subject, args):
+        if not subject.valid:
+            return OperatorResult(
+                self.name, "agent", subject.track_id,
+                frame.frame.step_index, frame.frame.timestamp_seconds,
+                False, {},
+            )
+        if context is None or not context.map_features:
+            return OperatorResult(
+                self.name, "agent", subject.track_id,
+                frame.frame.step_index, frame.frame.timestamp_seconds,
+                False, {},
+            )
+
+        from .lane_matching import match_agent_to_lane
+
+        window_seconds = args["window_seconds"]
+        max_lateral = args["max_lateral_m"]
+        max_heading = args["max_heading_delta_rad"]
+        min_speed = args.get("min_speed_mps", 0.0)
+
+        speed = _speed(subject)
+        if speed < min_speed:
+            return OperatorResult(
+                self.name, "agent", subject.track_id,
+                frame.frame.step_index, frame.frame.timestamp_seconds,
+                False, {"speed_mps": speed},
+            )
+
+        current_time = frame.frame.timestamp_seconds
+        matched = []
+        for af in context.input_frames:
+            ts = af.frame.timestamp_seconds
+            if ts < current_time - window_seconds or ts > current_time:
+                continue
+            agent = None
+            for a in af.frame.agent_states:
+                if a.track_id == subject.track_id and a.valid:
+                    agent = a
+                    break
+            if agent is None:
+                continue
+            m = match_agent_to_lane(
+                agent, context.map_features,
+                max_lateral_m=max_lateral, max_heading_delta_rad=max_heading,
+            )
+            if m is not None:
+                matched.append((af.frame.step_index, ts, m.lane_id))
+
+        if len(matched) < 2:
+            return OperatorResult(
+                self.name, "agent", subject.track_id,
+                frame.frame.step_index, frame.frame.timestamp_seconds,
+                False, {"matched_frames": len(matched)},
+            )
+
+        for i in range(1, len(matched)):
+            if matched[i][2] != matched[i - 1][2]:
+                return OperatorResult(
+                    self.name, "agent", subject.track_id,
+                    frame.frame.step_index, frame.frame.timestamp_seconds,
+                    True,
+                    {
+                        "previous_lane_id": matched[i - 1][2],
+                        "current_lane_id": matched[i][2],
+                        "previous_frame_index": matched[i - 1][0],
+                        "current_frame_index": matched[i][0],
+                        "lane_sequence": [m[2] for m in matched],
+                    },
+                )
+
+        return OperatorResult(
+            self.name, "agent", subject.track_id,
+            frame.frame.step_index, frame.frame.timestamp_seconds,
+            False, {"lane_sequence": [m[2] for m in matched]},
+        )
+
+
+class SdcRepeatedLaneChangeOperator:
+    name = "predicate.sdc_repeated_lane_change"
+    result_kind = "predicate"
+    subject_type = "agent"
+
+    def evaluate(self, context, frame, subject, args):
+        if not subject.valid:
+            return OperatorResult(
+                self.name, "agent", subject.track_id,
+                frame.frame.step_index, frame.frame.timestamp_seconds,
+                False, {},
+            )
+        if context is None or not context.map_features:
+            return OperatorResult(
+                self.name, "agent", subject.track_id,
+                frame.frame.step_index, frame.frame.timestamp_seconds,
+                False, {},
+            )
+
+        from .lane_matching import match_agent_to_lane
+
+        window_seconds = args["window_seconds"]
+        min_changes = args["min_lane_changes"]
+        max_lateral = args["max_lateral_m"]
+        max_heading = args["max_heading_delta_rad"]
+        min_speed = args.get("min_speed_mps", 0.0)
+
+        speed = _speed(subject)
+        if speed < min_speed:
+            return OperatorResult(
+                self.name, "agent", subject.track_id,
+                frame.frame.step_index, frame.frame.timestamp_seconds,
+                False, {"speed_mps": speed},
+            )
+
+        current_time = frame.frame.timestamp_seconds
+        matched = []
+        for af in context.input_frames:
+            ts = af.frame.timestamp_seconds
+            if ts < current_time - window_seconds or ts > current_time:
+                continue
+            agent = None
+            for a in af.frame.agent_states:
+                if a.track_id == subject.track_id and a.valid:
+                    agent = a
+                    break
+            if agent is None:
+                continue
+            m = match_agent_to_lane(
+                agent, context.map_features,
+                max_lateral_m=max_lateral, max_heading_delta_rad=max_heading,
+            )
+            if m is not None:
+                matched.append((af.frame.step_index, ts, m.lane_id))
+
+        if len(matched) < 2:
+            return OperatorResult(
+                self.name, "agent", subject.track_id,
+                frame.frame.step_index, frame.frame.timestamp_seconds,
+                False, {"matched_frames": len(matched)},
+            )
+
+        lane_change_count = 0
+        for i in range(1, len(matched)):
+            if matched[i][2] != matched[i - 1][2]:
+                lane_change_count += 1
+
+        value = lane_change_count >= min_changes and matched[-1][2] != matched[-2][2]
+        return OperatorResult(
+            self.name, "agent", subject.track_id,
+            frame.frame.step_index, frame.frame.timestamp_seconds,
+            value,
+            {
+                "lane_sequence": [m[2] for m in matched],
+                "lane_change_count": lane_change_count,
+                "matched_frame_indices": [m[0] for m in matched],
+                "matched_timestamps_seconds": [m[1] for m in matched],
+            },
+        )
+
+
+class SameLaneOrPathOperator:
+    name = "predicate.same_lane_or_path"
+    result_kind = "predicate"
+    subject_type = "agent_pair"
+
+    def evaluate(self, context, frame, subject, args):
+        if not subject.ego.valid or not subject.other.valid:
+            return OperatorResult(
+                self.name, "agent_pair", subject.subject_id,
+                frame.frame.step_index, frame.frame.timestamp_seconds,
+                False, {},
+            )
+
+        from .lane_matching import match_agent_to_lane
+
+        max_lane_lat = args.get("max_lane_lateral_m", 1.8)
+        max_lane_heading = args.get("max_heading_delta_rad", 0.7)
+        fb_lat = args.get("fallback_max_lateral_m", 1.2)
+        fb_heading = args.get("fallback_max_heading_delta_rad", 0.35)
+        allow_fb = args.get("allow_fallback_without_map", True)
+
+        map_features = getattr(context, "map_features", {}) if context is not None else {}
+
+        ego_match = match_agent_to_lane(
+            subject.ego, map_features,
+            max_lateral_m=max_lane_lat, max_heading_delta_rad=max_lane_heading,
+        )
+        other_match = match_agent_to_lane(
+            subject.other, map_features,
+            max_lateral_m=max_lane_lat, max_heading_delta_rad=max_lane_heading,
+        )
+
+        if ego_match is not None and other_match is not None:
+            same = ego_match.lane_id == other_match.lane_id
+            return OperatorResult(
+                self.name, "agent_pair", subject.subject_id,
+                frame.frame.step_index, frame.frame.timestamp_seconds,
+                same,
+                {
+                    "mode": "lane",
+                    "ego_lane_id": ego_match.lane_id,
+                    "other_lane_id": other_match.lane_id,
+                },
+            )
+
+        if map_features and (ego_match is None) != (other_match is None):
+            matched_id = ego_match.lane_id if ego_match is not None else other_match.lane_id
+            return OperatorResult(
+                self.name, "agent_pair", subject.subject_id,
+                frame.frame.step_index, frame.frame.timestamp_seconds,
+                False,
+                {
+                    "mode": "lane_mismatch",
+                    "ego_lane_id": ego_match.lane_id if ego_match is not None else None,
+                    "other_lane_id": other_match.lane_id if other_match is not None else None,
+                },
+            )
+
+        if not allow_fb:
+            return OperatorResult(
+                self.name, "agent_pair", subject.subject_id,
+                frame.frame.step_index, frame.frame.timestamp_seconds,
+                False, {"mode": "no_fallback"},
+            )
+
+        dx = subject.other.center.x - subject.ego.center.x
+        dy = subject.other.center.y - subject.ego.center.y
+        lon, lat = _rotate(dx, dy, subject.ego.heading)
+        heading_delta = abs(subject.ego.heading - subject.other.heading)
+        if heading_delta > math.pi:
+            heading_delta = 2 * math.pi - heading_delta
+
+        ok = abs(lat) <= fb_lat and heading_delta <= fb_heading
+        return OperatorResult(
+            self.name, "agent_pair", subject.subject_id,
+            frame.frame.step_index, frame.frame.timestamp_seconds,
+            ok,
+            {
+                "mode": "fallback_path",
+                "lateral_m": lat,
+                "heading_delta_rad": heading_delta,
+            },
+        )
+
+
 def register_builtin_operators(registry: OperatorRegistry) -> None:
     operators = [
         TypeIsOperator(),
@@ -548,8 +922,13 @@ def register_builtin_operators(registry: OperatorRegistry) -> None:
         NearRedLightStopPointOperator(),
         LateralGapBetweenOperator(),
         SamePathOverlapOperator(),
+        PairEgoSpeedAboveOperator(),
         RedLightBeforeStopLineOperator(),
         RedLightAfterStopLineOperator(),
+        RedLightCrossingTransitionOperator(),
+        SdcLaneChangedOperator(),
+        SdcRepeatedLaneChangeOperator(),
+        SameLaneOrPathOperator(),
     ]
     for op in operators:
         try:

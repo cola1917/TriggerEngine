@@ -178,18 +178,25 @@ class SubjectCache:
         if allowed_subject_ids is not None:
             return self._build_filtered_subjects(rule, aligned_frame, allowed_subject_ids)
 
-        if rule.subject_type != "agent_pair":
+        if rule.subject_type not in ("agent_pair", "sdc_pair"):
             return self.subjects_for(rule.subject_type, aligned_frame)
+
+        pair_mode = rule.pair.mode
 
         plan = build_pair_candidate_plan(rule)
         if not plan.can_prune:
-            return self.subjects_for(rule.subject_type, aligned_frame)
+            subjects = self.subjects_for(rule.subject_type, aligned_frame)
+            if pair_mode == "unordered":
+                subjects = _canonicalize_unordered_pairs(subjects)
+            return subjects
 
         key = self._rule_key(aligned_frame, rule.rule_id, rule.subject_type)
         if key in self._rule_cache:
             return self._rule_cache[key]
 
         subjects = self._build_agent_pair_candidates(aligned_frame, plan)
+        if pair_mode == "unordered":
+            subjects = _canonicalize_unordered_pairs(subjects)
         scan_count = self._last_pair_scan_count
         self._rule_cache[key] = subjects
         self._rule_build_counts[key] = self._rule_build_counts.get(key, 0) + 1
@@ -264,7 +271,7 @@ class SubjectCache:
             ]
         elif subject_type == "scenario":
             return [aligned_frame]
-        elif subject_type == "agent_pair":
+        elif subject_type in ("agent_pair", "sdc_pair"):
             from trigger_engine.operators.builtins import AgentPairSubject
 
             agents = [a for a in aligned_frame.frame.agent_states if a.valid]
@@ -274,6 +281,8 @@ class SubjectCache:
                     if i != j:
                         pairs.append(AgentPairSubject(ego=ego, other=other))
             return pairs
+        elif subject_type == "sdc_agent":
+            return list(aligned_frame.frame.agent_states)
         return []
 
     _last_pair_scan_count = 0
@@ -320,7 +329,7 @@ class SubjectCache:
         aligned_frame,
         allowed_subject_ids: set[str | int | None],
     ) -> list:
-        if rule.subject_type == "agent_pair":
+        if rule.subject_type in ("agent_pair", "sdc_pair"):
             return self._build_filtered_agent_pair_subjects(rule, aligned_frame, allowed_subject_ids)
 
         subjects = self._build_subjects(rule.subject_type, aligned_frame)
@@ -364,11 +373,11 @@ class SubjectCache:
 
     @staticmethod
     def _subject_id(subject_type: str, subject):
-        if subject_type == "agent":
+        if subject_type in ("agent", "sdc_agent"):
             return subject.track_id
         if subject_type == "lane":
             return subject.lane_id
-        if subject_type == "agent_pair":
+        if subject_type in ("agent_pair", "sdc_pair"):
             return subject.subject_id
         return None
 
@@ -391,7 +400,7 @@ class SubjectCache:
 
 
 def build_pair_candidate_plan(rule: Rule) -> PairCandidatePlan:
-    if rule.subject_type != "agent_pair" or not isinstance(rule.condition, AllCondition):
+    if rule.subject_type not in ("agent_pair", "sdc_pair") or not isinstance(rule.condition, AllCondition):
         return PairCandidatePlan(rule.rule_id, ())
 
     predicates = []
@@ -421,6 +430,23 @@ def _rotate(dx: float, dy: float, heading: float) -> tuple[float, float]:
     cos_h = math.cos(heading)
     sin_h = math.sin(heading)
     return dx * cos_h + dy * sin_h, -dx * sin_h + dy * cos_h
+
+
+def _canonicalize_unordered_pairs(pairs: list) -> list:
+    from trigger_engine.operators.builtins import AgentPairSubject
+
+    seen: set[tuple[int, int]] = set()
+    result = []
+    for pair in pairs:
+        a, b = pair.ego.track_id, pair.other.track_id
+        key = (min(a, b), max(a, b))
+        if key not in seen:
+            seen.add(key)
+            if a <= b:
+                result.append(pair)
+            else:
+                result.append(AgentPairSubject(ego=pair.other, other=pair.ego))
+    return result
 
 
 def _pair_order_key(subject_id, order: dict[str, int]) -> tuple[int, int, str]:

@@ -27,3 +27,5 @@ class AlignmentContext:
     input_frames: tuple[AlignedFrame, ...]
     source: str | None = None
     map_features: dict[int, MapFeature] = field(default_factory=dict)
+    sdc_track_index: int | None = None
+    sdc_track_id: int | None = None

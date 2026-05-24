@@ -83,6 +83,8 @@ def map_context(frames):
         input_frames=tuple(frames),
         source="unit",
         map_features={7: lane_feature()},
+        sdc_track_index=1,
+        sdc_track_id=1,
     )
 
 
@@ -112,7 +114,7 @@ class RedLightMapSemanticsContractTests(unittest.TestCase):
             scenario_id="scenario-red-light-map",
             timestamps_seconds=(0.0, 0.1),
             current_time_index=1,
-            sdc_track_index=0,
+            sdc_track_index=1,
             objects_of_interest=(),
             prediction_targets=(),
             frames=frames,
@@ -200,6 +202,8 @@ class RedLightMapSemanticsContractTests(unittest.TestCase):
             future_frames=(),
             input_frames=(frame,),
             source="unit",
+            sdc_track_index=1,
+            sdc_track_id=1,
         )
 
         self.assertFalse(
@@ -230,6 +234,34 @@ class RedLightMapSemanticsContractTests(unittest.TestCase):
             ).value
         )
 
+    def test_red_light_crossing_transition_requires_earlier_same_lane_before_state(self):
+        from trigger_engine.operators.builtins import register_builtin_operators
+        from trigger_engine.operators.registry import OperatorRegistry
+
+        registry = OperatorRegistry()
+        register_builtin_operators(registry)
+        op = registry.get("predicate.red_light_crossing_transition")
+        args = {
+            "max_lateral_m": 2.0,
+            "max_before_stop_line_m": 12.0,
+            "min_after_stop_line_m": 0.5,
+            "max_after_stop_line_m": 15.0,
+            "min_speed_mps": 0.5,
+            "max_heading_delta_rad": 0.7,
+        }
+
+        after = aligned_frame(1, (agent(1, x=2.0, y=0.1, vx=5.0),))
+        after_subject = after.frame.agent_states[0]
+
+        self.assertFalse(op.evaluate(map_context((after,)), after, after_subject, args).value)
+
+        before = aligned_frame(0, (agent(1, x=-3.0, y=0.1, vx=5.0),))
+        result = op.evaluate(map_context((before, after)), after, after_subject, args)
+
+        self.assertTrue(result.value)
+        self.assertEqual(result.metadata["lane_id"], 7)
+        self.assertEqual(result.metadata["before_frame_index"], 0)
+
     def test_classic_pack_defines_map_semantic_red_light_running_rules(self):
         from trigger_engine.scenarios.classic import CLASSIC_SCENARIO_RULES_YAML
 
@@ -251,7 +283,8 @@ class RedLightMapSemanticsContractTests(unittest.TestCase):
 
         before = aligned_frame(0, (agent(1, x=-3.0, y=0.1, vx=5.0),))
         after = aligned_frame(1, (agent(1, x=2.0, y=0.1, vx=5.0),))
-        result = TriggerEngine(operators, rules).evaluate(map_context((before, after)))
+        ctx = map_context((before, after))
+        result = TriggerEngine(operators, rules).evaluate(ctx)
         tags = {event.tag_name for event in result.events if event.subject_id == 1}
 
         self.assertIn("red_light_stop_line_approach", tags)

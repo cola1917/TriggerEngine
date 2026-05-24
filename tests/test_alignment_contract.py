@@ -46,7 +46,7 @@ def make_bundle(current_time_index=2, has_lidar_data=True):
         frame(
             2,
             "current",
-            (agent(2),),
+            (agent(0), agent(2),),
             (TrafficLightState(lane_id=7, state="go", stop_point=None),),
         ),
         frame(3, "future", (agent(3),), ()),

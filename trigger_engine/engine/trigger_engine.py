@@ -209,6 +209,20 @@ class TemporalRuleEngine:
         subject_id: str | int | None,
         metadata: dict[str, object],
     ) -> TagEvent:
+        merged = dict(rule.emit.metadata)
+        merged.update(metadata)
+        merged["intent"] = rule.emit.intent
+        if rule.subject_type == "sdc_agent":
+            merged.setdefault("ego_id", context.sdc_track_id)
+            merged.setdefault("ego_role", "sdc")
+        elif rule.subject_type == "sdc_pair":
+            merged.setdefault("pair_mode", "sdc")
+            merged.setdefault("ego_id", context.sdc_track_id)
+            merged.setdefault("ego_role", "sdc")
+            if isinstance(subject_id, str) and ":" in subject_id:
+                parts = subject_id.split(":", 1)
+                merged.setdefault("target_id", int(parts[1]))
+            merged.setdefault("target_role", "interactive_agent")
         return TagEvent(
             scenario_id=context.scenario_id,
             source=context.source,
@@ -219,7 +233,7 @@ class TemporalRuleEngine:
             subject_id=subject_id,
             value=rule.emit.value,
             rule_id=rule.rule_id,
-            metadata=metadata,
+            metadata=merged,
         )
 
     def _aligned_frame_by_step(
@@ -244,7 +258,7 @@ class TemporalRuleEngine:
             ]
         elif subject_type == "scenario":
             return [aligned_frame]
-        elif subject_type == "agent_pair":
+        elif subject_type in ("agent_pair", "sdc_pair"):
             from trigger_engine.operators.builtins import AgentPairSubject
 
             agents = [a for a in aligned_frame.frame.agent_states if a.valid]
@@ -254,14 +268,16 @@ class TemporalRuleEngine:
                     if i != j:
                         pairs.append(AgentPairSubject(ego=ego, other=other))
             return pairs
+        elif subject_type == "sdc_agent":
+            return list(aligned_frame.frame.agent_states)
         return []
 
     def _get_subject_id(self, subject_type: str, subject) -> str | int | None:
-        if subject_type == "agent":
+        if subject_type in ("agent", "sdc_agent"):
             return subject.track_id
         elif subject_type == "lane":
             return subject.lane_id
-        elif subject_type == "agent_pair":
+        elif subject_type in ("agent_pair", "sdc_pair"):
             return subject.subject_id
         return None
 
@@ -413,7 +429,7 @@ class TriggerEngine:
         for rule in plan.temporal_rules:
             if not isinstance(rule.condition, SequenceTagCondition):
                 continue
-            if rule.subject_type != "agent_pair":
+            if rule.subject_type not in ("agent_pair", "sdc_pair"):
                 continue
             steps = tuple(step.tag_name for step in rule.condition.steps)
             if not steps:

@@ -72,8 +72,13 @@ class BuiltinOperatorsContractTests(unittest.TestCase):
                 "predicate.heading_converging",
                 "predicate.same_path_overlap",
                 "predicate.near_red_light_stop_point",
+                "predicate.pair_ego_speed_above",
                 "predicate.red_light_before_stop_line",
                 "predicate.red_light_after_stop_line",
+                "predicate.red_light_crossing_transition",
+                "predicate.sdc_lane_changed",
+                "predicate.sdc_repeated_lane_change",
+                "predicate.same_lane_or_path",
             },
         )
 
@@ -125,6 +130,29 @@ class BuiltinOperatorsContractTests(unittest.TestCase):
         result = registry.get("predicate.low_ttc").evaluate(context(frame), frame, pair, {"threshold_s": 3.0})
         self.assertTrue(result.value)
         self.assertAlmostEqual(result.metadata["ttc_s"], 2.0)
+
+    def test_pair_ego_speed_above_operator_uses_ego_speed(self):
+        from trigger_engine.operators.builtins import AgentPairSubject, register_builtin_operators
+        from trigger_engine.operators.registry import OperatorRegistry
+
+        registry = OperatorRegistry()
+        register_builtin_operators(registry)
+        ego = agent(1, vx=2.0, vy=0.0)
+        other = agent(2, vx=20.0, vy=0.0)
+        invalid_ego = agent(3, vx=5.0, valid=False)
+        frame = aligned_frame(ego, other, invalid_ego)
+        op = registry.get("predicate.pair_ego_speed_above")
+
+        result = op.evaluate(context(frame), frame, AgentPairSubject(ego=ego, other=other), {"threshold_mps": 1.0})
+        self.assertTrue(result.value)
+        self.assertAlmostEqual(result.metadata["ego_speed_mps"], 2.0)
+
+        self.assertFalse(
+            op.evaluate(context(frame), frame, AgentPairSubject(ego=ego, other=other), {"threshold_mps": 3.0}).value
+        )
+        self.assertFalse(
+            op.evaluate(context(frame), frame, AgentPairSubject(ego=invalid_ego, other=other), {"threshold_mps": 1.0}).value
+        )
 
     def test_low_ttc_is_false_when_other_agent_is_behind_or_not_closing(self):
         from trigger_engine.operators.builtins import AgentPairSubject, register_builtin_operators

@@ -97,6 +97,19 @@ class ScenarioAlignment:
 
         input_frames = tuple(observed_frames) + (current_aligned,)
 
+        # Resolve SDC identity
+        sdc_track_index = bundle.sdc_track_index
+        sdc_track_id = None
+        if sdc_track_index is not None:
+            for agent in current_frame.agent_states:
+                if agent.track_index == sdc_track_index and agent.valid:
+                    sdc_track_id = agent.track_id
+                    break
+            if sdc_track_id is None:
+                raise AlignmentError(
+                    f"sdc_track_index={sdc_track_index} not found in current frame agents"
+                )
+
         return AlignmentContext(
             scenario_id=bundle.scenario_id,
             watermark=watermark,
@@ -106,4 +119,6 @@ class ScenarioAlignment:
             input_frames=input_frames,
             source=bundle.source,
             map_features=bundle.map_features,
+            sdc_track_index=sdc_track_index,
+            sdc_track_id=sdc_track_id,
         )
