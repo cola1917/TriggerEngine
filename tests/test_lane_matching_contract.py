@@ -1,6 +1,8 @@
 import math
 import unittest
 
+from trigger_engine.alignment.context import AlignedFrame, AlignmentContext, Watermark
+from trigger_engine.data.frames import Frame
 from trigger_engine.data.frames import AgentState, MapFeature, Point3D
 
 
@@ -49,6 +51,64 @@ class LaneMatchingContractTests(unittest.TestCase):
 
         self.assertIsNotNone(match)
         self.assertEqual(match.lane_id, 11)
+
+    def test_cached_match_reuses_context_result_without_changing_match(self):
+        from trigger_engine.operators.lane_matching import (
+            match_agent_to_lane,
+            match_agent_to_lane_cached,
+        )
+
+        ego = agent()
+        map_features = {
+            11: lane(11, [(-10.0, 0.6), (10.0, 0.6)]),
+        }
+        frame = AlignedFrame(
+            frame=Frame(
+                scenario_id="lane-cache",
+                step_index=0,
+                timestamp_seconds=0.0,
+                phase="current",
+                agent_states=(ego,),
+                traffic_lights=(),
+            ),
+            visibility="current",
+            available_modalities=frozenset({"agents", "map"}),
+        )
+        context = AlignmentContext(
+            scenario_id="lane-cache",
+            watermark=Watermark("lane-cache", 0, 0.0),
+            observed_frames=(),
+            current_frame=frame,
+            future_frames=(),
+            input_frames=(frame,),
+            map_features=map_features,
+            sdc_track_id=1,
+        )
+
+        expected = match_agent_to_lane(
+            ego,
+            map_features,
+            max_lateral_m=1.5,
+            max_heading_delta_rad=0.7,
+        )
+        first = match_agent_to_lane_cached(
+            context,
+            ego,
+            map_features,
+            max_lateral_m=1.5,
+            max_heading_delta_rad=0.7,
+        )
+        second = match_agent_to_lane_cached(
+            context,
+            ego,
+            map_features,
+            max_lateral_m=1.5,
+            max_heading_delta_rad=0.7,
+        )
+
+        self.assertEqual(first, expected)
+        self.assertIs(second, first)
+        self.assertEqual(len(context.lane_match_cache), 1)
 
 
 if __name__ == "__main__":

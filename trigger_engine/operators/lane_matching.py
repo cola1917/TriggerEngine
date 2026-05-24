@@ -74,3 +74,43 @@ def match_agent_to_lane(
             cumulative += math.sqrt(seg_len_sq)
 
     return best
+
+
+def match_agent_to_lane_cached(
+    context,
+    agent,
+    map_features: dict,
+    *,
+    max_lateral_m: float,
+    max_heading_delta_rad: float,
+    heading_weight_m_per_rad: float = 3.0,
+) -> LaneMatch | None:
+    cache = getattr(context, "lane_match_cache", None)
+    if cache is None:
+        return match_agent_to_lane(
+            agent,
+            map_features,
+            max_lateral_m=max_lateral_m,
+            max_heading_delta_rad=max_heading_delta_rad,
+            heading_weight_m_per_rad=heading_weight_m_per_rad,
+        )
+
+    key = (
+        agent.track_id,
+        agent.timestamp_seconds,
+        agent.center.x,
+        agent.center.y,
+        agent.heading,
+        max_lateral_m,
+        max_heading_delta_rad,
+        heading_weight_m_per_rad,
+    )
+    if key not in cache:
+        cache[key] = match_agent_to_lane(
+            agent,
+            map_features,
+            max_lateral_m=max_lateral_m,
+            max_heading_delta_rad=max_heading_delta_rad,
+            heading_weight_m_per_rad=heading_weight_m_per_rad,
+        )
+    return cache[key]

@@ -29,3 +29,4 @@ class AlignmentContext:
     map_features: dict[int, MapFeature] = field(default_factory=dict)
     sdc_track_index: int | None = None
     sdc_track_id: int | None = None
+    lane_match_cache: dict[tuple, object] = field(default_factory=dict, compare=False, hash=False)

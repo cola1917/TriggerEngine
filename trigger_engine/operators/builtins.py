@@ -774,7 +774,7 @@ class SdcLaneChangedOperator:
                 False, {},
             )
 
-        from .lane_matching import match_agent_to_lane
+        from .lane_matching import match_agent_to_lane_cached
 
         window_seconds = args["window_seconds"]
         max_lateral = args["max_lateral_m"]
@@ -802,8 +802,8 @@ class SdcLaneChangedOperator:
                     break
             if agent is None:
                 continue
-            m = match_agent_to_lane(
-                agent, context.map_features,
+            m = match_agent_to_lane_cached(
+                context, agent, context.map_features,
                 max_lateral_m=max_lateral, max_heading_delta_rad=max_heading,
             )
             if m is not None:
@@ -857,7 +857,7 @@ class SdcRepeatedLaneChangeOperator:
                 False, {},
             )
 
-        from .lane_matching import match_agent_to_lane
+        from .lane_matching import match_agent_to_lane_cached
 
         window_seconds = args["window_seconds"]
         min_changes = args["min_lane_changes"]
@@ -887,8 +887,8 @@ class SdcRepeatedLaneChangeOperator:
                     break
             if agent is None:
                 continue
-            m = match_agent_to_lane(
-                agent, context.map_features,
+            m = match_agent_to_lane_cached(
+                context, agent, context.map_features,
                 max_lateral_m=max_lateral, max_heading_delta_rad=max_heading,
             )
             if m is not None:
@@ -959,7 +959,7 @@ class SameLaneOrPathOperator:
                 False, {},
             )
 
-        from .lane_matching import match_agent_to_lane
+        from .lane_matching import match_agent_to_lane_cached
 
         max_lane_lat = args.get("max_lane_lateral_m", 1.8)
         max_lane_heading = args.get("max_heading_delta_rad", 0.7)
@@ -969,12 +969,12 @@ class SameLaneOrPathOperator:
 
         map_features = getattr(context, "map_features", {}) if context is not None else {}
 
-        ego_match = match_agent_to_lane(
-            subject.ego, map_features,
+        ego_match = match_agent_to_lane_cached(
+            context, subject.ego, map_features,
             max_lateral_m=max_lane_lat, max_heading_delta_rad=max_lane_heading,
         )
-        other_match = match_agent_to_lane(
-            subject.other, map_features,
+        other_match = match_agent_to_lane_cached(
+            context, subject.other, map_features,
             max_lateral_m=max_lane_lat, max_heading_delta_rad=max_lane_heading,
         )
 
