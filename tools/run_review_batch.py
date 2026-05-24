@@ -31,10 +31,11 @@ def _build_engine():
     return TriggerEngine(operators, rules)
 
 
-def evaluate_shard(path_text: str) -> dict:
+def evaluate_shard(path_text: str, payload_options: dict | None = None) -> dict:
     from trigger_engine.alignment.scenario_alignment import ScenarioAlignment
     from trigger_engine.data.adapters import WaymoScenarioAdapter
     from trigger_engine.data.readers import TFRecordScenarioReader
+    from tools.export_viewer import build_viewer_payload
 
     path = Path(path_text)
     reader = TFRecordScenarioReader()
@@ -45,6 +46,7 @@ def evaluate_shard(path_text: str) -> dict:
     timings = Counter()
     review_counts = Counter()
     review_refs = []
+    payload_outputs = []
     scenario_count = 0
     started = time.perf_counter()
 
@@ -73,14 +75,29 @@ def evaluate_shard(path_text: str) -> dict:
         tags = [event.tag_name for event in review_events]
         for tag in tags:
             review_counts[tag] += 1
-        review_refs.append(
-            {
-                "source": str(path),
-                "scenario_index": scenario_index,
-                "scenario_id": context.scenario_id,
-                "review_tags": tags,
-            }
-        )
+        ref = {
+            "source": str(path),
+            "scenario_index": scenario_index,
+            "scenario_id": context.scenario_id,
+            "review_tags": tags,
+        }
+        if payload_options is not None:
+            payload_dir = Path(str(payload_options["payload_dir"]))
+            payload_dir.mkdir(parents=True, exist_ok=True)
+            payload = build_viewer_payload(
+                context,
+                result,
+                map_feature_limit=int(payload_options["map_feature_limit"]),
+                playback_future_frames=int(payload_options["future_frames"]),
+                map_crop_margin_m=float(payload_options["map_crop_margin_m"]),
+            )
+            payload["source_file"] = str(path)
+            payload["scenario_index"] = scenario_index
+            output = payload_dir / f"review_payload_{_shard_number(path):05d}_s{scenario_index:04d}.json"
+            output.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            ref["payload_path"] = str(output)
+            payload_outputs.append(str(output))
+        review_refs.append(ref)
 
     elapsed = time.perf_counter() - started
     return {
@@ -92,6 +109,7 @@ def evaluate_shard(path_text: str) -> dict:
         "seconds": elapsed,
         "timings": dict(sorted(timings.items())),
         "review_scenario_refs": review_refs,
+        "payload_outputs": payload_outputs,
     }
 
 
@@ -123,6 +141,11 @@ def merge_shard_summaries(shards: list[dict], elapsed: float) -> dict:
         "timings": dict(sorted(timings.items())),
         "files": files,
         "review_scenario_refs": review_refs,
+        "payload_outputs": [
+            payload
+            for shard in sorted(shards, key=lambda item: item["path"])
+            for payload in shard.get("payload_outputs", [])
+        ],
     }
 
 
@@ -179,14 +202,22 @@ def run_batch(
 ) -> dict:
     started = time.perf_counter()
     shard_summaries = []
+    payload_options = None
+    if payload_dir is not None:
+        payload_options = {
+            "payload_dir": str(payload_dir),
+            "map_feature_limit": map_feature_limit,
+            "future_frames": future_frames,
+            "map_crop_margin_m": map_crop_margin_m,
+        }
 
     if workers <= 1:
         for path in paths:
-            shard_summaries.append(evaluate_shard(str(path)))
+            shard_summaries.append(evaluate_shard(str(path), payload_options))
     else:
         with ProcessPoolExecutor(max_workers=workers) as executor:
             futures = {
-                executor.submit(evaluate_shard, str(path)): path
+                executor.submit(evaluate_shard, str(path), payload_options): path
                 for path in paths
             }
             for future in as_completed(futures):
@@ -197,13 +228,6 @@ def run_batch(
     output.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
 
     if payload_dir is not None:
-        write_review_payloads(
-            summary,
-            payload_dir,
-            map_feature_limit=map_feature_limit,
-            future_frames=future_frames,
-            map_crop_margin_m=map_crop_margin_m,
-        )
         if view_output is not None:
             from tools.export_viewer import render_review_index_from_payload_dir
 

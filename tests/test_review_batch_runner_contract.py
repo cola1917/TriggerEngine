@@ -23,6 +23,7 @@ class ReviewBatchRunnerContractTests(unittest.TestCase):
                             "review_tags": ["cut_in_confirmed"],
                         }
                     ],
+                    "payload_outputs": ["payloads/review_payload_00002_s0007.json"],
                 },
                 {
                     "path": "data/shard-00001",
@@ -40,6 +41,7 @@ class ReviewBatchRunnerContractTests(unittest.TestCase):
                             "review_tags": ["red_light_running"],
                         }
                     ],
+                    "payload_outputs": ["payloads/review_payload_00001_s0003.json"],
                 },
             ],
             elapsed=4.0,
@@ -55,6 +57,13 @@ class ReviewBatchRunnerContractTests(unittest.TestCase):
         self.assertEqual(
             [ref["scenario_id"] for ref in summary["review_scenario_refs"]],
             ["a", "b"],
+        )
+        self.assertEqual(
+            summary["payload_outputs"],
+            [
+                "payloads/review_payload_00001_s0003.json",
+                "payloads/review_payload_00002_s0007.json",
+            ],
         )
         self.assertEqual(list(summary["files"].keys()), ["shard-00001", "shard-00002"])
 
