@@ -109,6 +109,23 @@ class LaneMatchingContractTests(unittest.TestCase):
         self.assertEqual(first, expected)
         self.assertIs(second, first)
         self.assertEqual(len(context.lane_match_cache), 1)
+        self.assertEqual(len(context.lane_match_index_cache), 1)
+
+    def test_segment_index_finds_lane_when_agent_is_near_long_segment(self):
+        from trigger_engine.operators.lane_matching import match_agent_to_lane
+
+        match = match_agent_to_lane(
+            agent(x=95.0, y=0.8),
+            {
+                20: lane(20, [(0.0, 0.0), (100.0, 0.0)]),
+            },
+            max_lateral_m=1.0,
+            max_heading_delta_rad=0.7,
+        )
+
+        self.assertIsNotNone(match)
+        self.assertEqual(match.lane_id, 20)
+        self.assertAlmostEqual(match.longitudinal_s_m, 95.0)
 
 
 if __name__ == "__main__":
