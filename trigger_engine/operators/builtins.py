@@ -454,7 +454,7 @@ def _agent_heading_change_after(context, frame, track_id: int, horizon_seconds: 
     start = None
     end = None
     start_time = frame.frame.timestamp_seconds
-    max_time = start_time + horizon_seconds
+    max_time = start_time + horizon_seconds + 1e-6
     for aligned_frame in tuple(context.input_frames) + tuple(context.future_frames):
         ts = aligned_frame.frame.timestamp_seconds
         if ts < start_time or ts > max_time:
@@ -471,6 +471,15 @@ def _agent_heading_change_after(context, frame, track_id: int, horizon_seconds: 
     if start is None or end is None:
         return None
     return _heading_delta(start, end)
+
+
+def _future_heading_change_exceeds(context, frame, track_id: int, args, *, prefix: str = ""):
+    max_change = args.get(f"{prefix}max_future_heading_change_rad")
+    if max_change is None:
+        return None, False
+    horizon = args.get(f"{prefix}future_heading_horizon_seconds", 2.0)
+    heading_change = _agent_heading_change_after(context, frame, track_id, horizon)
+    return heading_change, heading_change is not None and heading_change > max_change
 
 
 def _lane_heading_change_from_stop(lane_polyline, stop_point, lookahead_m: float) -> float | None:
@@ -645,6 +654,27 @@ class RedLightAfterStopLineOperator:
                 False, {"speed_mps": speed},
             )
 
+        future_heading_change, future_heading_rejected = _future_heading_change_exceeds(
+            context, frame, subject.track_id, args
+        )
+        if future_heading_rejected:
+            return OperatorResult(
+                self.name, "agent", subject.track_id,
+                frame.frame.step_index, frame.frame.timestamp_seconds,
+                False,
+                {"future_heading_change_rad": future_heading_change},
+            )
+        extended_future_heading_change, extended_future_heading_rejected = (
+            _future_heading_change_exceeds(context, frame, subject.track_id, args, prefix="extended_")
+        )
+        if extended_future_heading_rejected:
+            return OperatorResult(
+                self.name, "agent", subject.track_id,
+                frame.frame.step_index, frame.frame.timestamp_seconds,
+                False,
+                {"extended_future_heading_change_rad": extended_future_heading_change},
+            )
+
         for tl, (dir_x, dir_y) in _find_red_light_and_lane(context, frame):
             dx = subject.center.x - tl.stop_point.x
             dy = subject.center.y - tl.stop_point.y
@@ -671,6 +701,8 @@ class RedLightAfterStopLineOperator:
                         "lateral_m": lat,
                         "speed_mps": speed,
                         "heading_delta_rad": heading_delta,
+                        "future_heading_change_rad": future_heading_change,
+                        "extended_future_heading_change_rad": extended_future_heading_change,
                     },
                 )
 
@@ -702,8 +734,6 @@ class RedLightCrossingTransitionOperator:
         max_heading_delta = args["max_heading_delta_rad"]
         max_lane_heading_change = args.get("max_lane_heading_change_rad")
         lane_lookahead = args.get("lane_heading_lookahead_m", max_after)
-        max_future_heading_change = args.get("max_future_heading_change_rad")
-        future_horizon = args.get("future_heading_horizon_seconds", 2.0)
 
         speed = _speed(subject)
         if speed < min_speed:
@@ -720,21 +750,26 @@ class RedLightCrossingTransitionOperator:
                 False, {},
             )
 
-        future_heading_change = None
-        if max_future_heading_change is not None:
-            future_heading_change = _agent_heading_change_after(
-                context, frame, subject.track_id, future_horizon
+        future_heading_change, future_heading_rejected = _future_heading_change_exceeds(
+            context, frame, subject.track_id, args
+        )
+        if future_heading_rejected:
+            return OperatorResult(
+                self.name, "agent", subject.track_id,
+                frame.frame.step_index, frame.frame.timestamp_seconds,
+                False,
+                {"future_heading_change_rad": future_heading_change},
             )
-            if (
-                future_heading_change is not None
-                and future_heading_change > max_future_heading_change
-            ):
-                return OperatorResult(
-                    self.name, "agent", subject.track_id,
-                    frame.frame.step_index, frame.frame.timestamp_seconds,
-                    False,
-                    {"future_heading_change_rad": future_heading_change},
-                )
+        extended_future_heading_change, extended_future_heading_rejected = (
+            _future_heading_change_exceeds(context, frame, subject.track_id, args, prefix="extended_")
+        )
+        if extended_future_heading_rejected:
+            return OperatorResult(
+                self.name, "agent", subject.track_id,
+                frame.frame.step_index, frame.frame.timestamp_seconds,
+                False,
+                {"extended_future_heading_change_rad": extended_future_heading_change},
+            )
 
         # Check current frame: SDC must be AFTER a red-light stop line
         current_reds = _find_red_light_and_lane(context, frame)
@@ -813,6 +848,7 @@ class RedLightCrossingTransitionOperator:
                                     else None
                                 ),
                                 "future_heading_change_rad": future_heading_change,
+                                "extended_future_heading_change_rad": extended_future_heading_change,
                             },
                         )
 

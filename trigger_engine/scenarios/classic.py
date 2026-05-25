@@ -318,6 +318,8 @@ rules:
             lane_heading_lookahead_m: 15.0
             max_future_heading_change_rad: 0.25
             future_heading_horizon_seconds: 2.0
+            extended_max_future_heading_change_rad: 0.45
+            extended_future_heading_horizon_seconds: 5.0
     emit:
       tag: red_light_stop_line_crossed
       intent: supporting
@@ -342,6 +344,8 @@ rules:
             lane_heading_lookahead_m: 15.0
             max_future_heading_change_rad: 0.25
             future_heading_horizon_seconds: 2.0
+            extended_max_future_heading_change_rad: 0.45
+            extended_future_heading_horizon_seconds: 5.0
     emit:
       tag: red_light_running
       intent: review

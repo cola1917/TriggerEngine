@@ -88,13 +88,13 @@ def aligned_frame(step_index, agents, traffic_lights=(red_light(),)):
     )
 
 
-def map_context(frames, map_features=None):
+def map_context(frames, map_features=None, future_frames=()):
     return AlignmentContext(
         scenario_id="scenario-red-light-map",
         watermark=Watermark("scenario-red-light-map", frames[-1].frame.step_index, frames[-1].frame.timestamp_seconds),
         observed_frames=tuple(frames[:-1]),
         current_frame=frames[-1],
-        future_frames=(),
+        future_frames=tuple(future_frames),
         input_frames=tuple(frames),
         source="unit",
         map_features=map_features if map_features is not None else {7: lane_feature()},
@@ -300,6 +300,63 @@ class RedLightMapSemanticsContractTests(unittest.TestCase):
         ctx = map_context((before, after), map_features={7: curved_right_turn_lane_feature()})
 
         self.assertFalse(op.evaluate(ctx, after, after.frame.agent_states[0], args).value)
+
+    def test_red_light_crossing_transition_rejects_late_ego_turn(self):
+        from trigger_engine.operators.builtins import register_builtin_operators
+        from trigger_engine.operators.registry import OperatorRegistry
+
+        registry = OperatorRegistry()
+        register_builtin_operators(registry)
+        op = registry.get("predicate.red_light_crossing_transition")
+        args = {
+            "max_lateral_m": 2.0,
+            "max_before_stop_line_m": 12.0,
+            "min_after_stop_line_m": 0.5,
+            "max_after_stop_line_m": 15.0,
+            "min_speed_mps": 0.5,
+            "max_heading_delta_rad": 0.7,
+            "max_future_heading_change_rad": 0.25,
+            "future_heading_horizon_seconds": 2.0,
+            "extended_max_future_heading_change_rad": 0.45,
+            "extended_future_heading_horizon_seconds": 5.0,
+        }
+
+        before = aligned_frame(0, (agent(1, x=-3.0, y=0.1, vx=5.0),))
+        after = aligned_frame(1, (agent(1, x=2.0, y=0.1, vx=5.0),))
+        late_turn = aligned_frame(51, (agent(1, x=8.0, y=-6.0, vx=1.0, vy=-4.0, heading=-1.0),))
+        ctx = map_context((before, after), future_frames=(late_turn,))
+
+        result = op.evaluate(ctx, after, after.frame.agent_states[0], args)
+
+        self.assertFalse(result.value)
+        self.assertGreater(result.metadata["extended_future_heading_change_rad"], 0.45)
+
+    def test_red_light_crossing_transition_keeps_straight_crossing(self):
+        from trigger_engine.operators.builtins import register_builtin_operators
+        from trigger_engine.operators.registry import OperatorRegistry
+
+        registry = OperatorRegistry()
+        register_builtin_operators(registry)
+        op = registry.get("predicate.red_light_crossing_transition")
+        args = {
+            "max_lateral_m": 2.0,
+            "max_before_stop_line_m": 12.0,
+            "min_after_stop_line_m": 0.5,
+            "max_after_stop_line_m": 15.0,
+            "min_speed_mps": 0.5,
+            "max_heading_delta_rad": 0.7,
+            "max_future_heading_change_rad": 0.25,
+            "future_heading_horizon_seconds": 2.0,
+            "extended_max_future_heading_change_rad": 0.45,
+            "extended_future_heading_horizon_seconds": 5.0,
+        }
+
+        before = aligned_frame(0, (agent(1, x=-3.0, y=0.1, vx=5.0),))
+        after = aligned_frame(1, (agent(1, x=2.0, y=0.1, vx=5.0),))
+        future = aligned_frame(51, (agent(1, x=20.0, y=0.1, vx=5.0, heading=0.0),))
+        ctx = map_context((before, after), future_frames=(future,))
+
+        self.assertTrue(op.evaluate(ctx, after, after.frame.agent_states[0], args).value)
 
     def test_classic_pack_defines_map_semantic_red_light_running_rules(self):
         from trigger_engine.scenarios.classic import CLASSIC_SCENARIO_RULES_YAML
