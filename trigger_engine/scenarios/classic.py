@@ -355,6 +355,93 @@ rules:
           by: subject
           mode: interval
 
+  # --- SDC Hard Braking / Emergency Braking ---
+  - id: sdc_hard_braking
+    kind: single_frame
+    subject: sdc_pair
+    when:
+      all:
+        - operator: predicate.pair_types_are
+          args:
+            ego_type: vehicle
+        - operator: predicate.pair_ego_hard_braking
+          args:
+            other_types: [vehicle, pedestrian, cyclist]
+            window_seconds: 1.0
+            max_acceleration_mps2: -3.0
+            min_speed_drop_mps: 2.0
+            min_start_speed_mps: 3.0
+            max_front_longitudinal_m: 35.0
+            max_lateral_m: 4.0
+    emit:
+      tag: sdc_hard_braking
+      intent: review
+      metadata:
+        review_family: sdc_response
+        review_priority: 30
+      policy:
+        cooldown_frames: 20
+        episode:
+          by: subject
+          mode: interval
+
+  # --- VRU Close Interaction ---
+  - id: vru_close_interaction
+    kind: single_frame
+    subject: sdc_pair
+    when:
+      all:
+        - operator: predicate.vru_close_interaction
+          args:
+            vru_types: [pedestrian, cyclist]
+            min_longitudinal_m: -1.0
+            max_longitudinal_m: 16.0
+            max_lateral_m: 5.0
+            max_distance_m: 12.0
+            min_ego_speed_mps: 0.5
+            min_closing_speed_mps: 0.2
+    emit:
+      tag: vru_close_interaction
+      intent: review
+      metadata:
+        review_family: vru
+        review_priority: 20
+      policy:
+        cooldown_frames: 20
+        episode:
+          by: subject
+          mode: interval
+
+  # --- Lane-change Conflict ---
+  - id: lane_change_conflict
+    kind: single_frame
+    subject: sdc_pair
+    when:
+      all:
+        - operator: predicate.sdc_lane_change_conflict
+          args:
+            window_seconds: 3.0
+            max_lane_lateral_m: 1.8
+            target_lane_lateral_m: 2.2
+            max_heading_delta_rad: 0.7
+            min_lateral_displacement_m: 1.5
+            max_front_longitudinal_m: 25.0
+            max_behind_longitudinal_m: 20.0
+            max_lateral_m: 3.0
+            max_ttc_s: 4.0
+            min_closing_speed_mps: 0.5
+    emit:
+      tag: lane_change_conflict
+      intent: review
+      metadata:
+        review_family: lane_change
+        review_priority: 20
+      policy:
+        cooldown_frames: 20
+        episode:
+          by: subject
+          mode: interval
+
   # --- SDC Repeated Lane Change ---
   - id: sdc_repeated_lane_change
     kind: single_frame

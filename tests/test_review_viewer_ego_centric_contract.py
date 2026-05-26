@@ -74,8 +74,10 @@ class ReviewViewerEgoCentricContractTests(unittest.TestCase):
         summary_end = html.index("function updateSelectionDetails", summary_start)
         summary_source = html[summary_start:summary_end]
         self.assertIn("const ids = pairRoleIds(event)", summary_source)
-        self.assertIn("summaryEgo.textContent = String(ids.egoId)", summary_source)
-        self.assertIn("summaryTarget.textContent = String(ids.targetId)", summary_source)
+        self.assertIn("summaryEgo.textContent = agentLabel", summary_source)
+        self.assertIn("ids.egoId", summary_source)
+        self.assertIn("summaryTarget.textContent = agentLabel", summary_source)
+        self.assertIn("ids.targetId", summary_source)
 
     def test_canvas_backing_store_matches_rendered_size_to_avoid_misalignment(self):
         from tools.export_viewer import build_viewer_payload, render_viewer_html

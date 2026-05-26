@@ -1,0 +1,278 @@
+{
+  "total_scenarios": 1445,
+  "review_scenarios": 22,
+  "review_event_counts": {
+    "cut_in_confirmed": 1,
+    "sdc_hard_braking": 1,
+    "vru_close_interaction": 31
+  },
+  "seconds": 155.15440830006264,
+  "scenarios_per_second": 9.31330289504521,
+  "timings": {
+    "adapter_seconds": 163.3733610031195,
+    "alignment_seconds": 15.033534704241902,
+    "engine_seconds": 209.37918969709426
+  },
+  "files": {
+    "validation_interactive.tfrecord-00000-of-00150": {
+      "scenarios": 282,
+      "review_scenarios": 5,
+      "seconds": 81.28600320010446
+    },
+    "validation_interactive.tfrecord-00001-of-00150": {
+      "scenarios": 294,
+      "review_scenarios": 6,
+      "seconds": 84.36120790010318
+    },
+    "validation_interactive.tfrecord-00002-of-00150": {
+      "scenarios": 274,
+      "review_scenarios": 4,
+      "seconds": 75.31285330001265
+    },
+    "validation_interactive.tfrecord-00003-of-00150": {
+      "scenarios": 307,
+      "review_scenarios": 2,
+      "seconds": 82.78428089991212
+    },
+    "validation_interactive.tfrecord-00004-of-00150": {
+      "scenarios": 288,
+      "review_scenarios": 5,
+      "seconds": 79.47485680016689
+    }
+  },
+  "review_scenario_refs": [
+    {
+      "source": "E:\\code\\TriggerEngine\\data\\validation_interactive.tfrecord-00000-of-00150",
+      "scenario_index": 14,
+      "scenario_id": "dbfb4599e8c05ff6",
+      "review_tags": [
+        "vru_close_interaction"
+      ],
+      "payload_path": "review_payload_v2_first5\\review_payload_00000_s0014.json"
+    },
+    {
+      "source": "E:\\code\\TriggerEngine\\data\\validation_interactive.tfrecord-00000-of-00150",
+      "scenario_index": 24,
+      "scenario_id": "6aa4777f71622889",
+      "review_tags": [
+        "vru_close_interaction",
+        "vru_close_interaction",
+        "vru_close_interaction",
+        "vru_close_interaction"
+      ],
+      "payload_path": "review_payload_v2_first5\\review_payload_00000_s0024.json"
+    },
+    {
+      "source": "E:\\code\\TriggerEngine\\data\\validation_interactive.tfrecord-00000-of-00150",
+      "scenario_index": 58,
+      "scenario_id": "9352573886150e4f",
+      "review_tags": [
+        "vru_close_interaction"
+      ],
+      "payload_path": "review_payload_v2_first5\\review_payload_00000_s0058.json"
+    },
+    {
+      "source": "E:\\code\\TriggerEngine\\data\\validation_interactive.tfrecord-00000-of-00150",
+      "scenario_index": 157,
+      "scenario_id": "ad5010ff20c0a79b",
+      "review_tags": [
+        "vru_close_interaction"
+      ],
+      "payload_path": "review_payload_v2_first5\\review_payload_00000_s0157.json"
+    },
+    {
+      "source": "E:\\code\\TriggerEngine\\data\\validation_interactive.tfrecord-00000-of-00150",
+      "scenario_index": 280,
+      "scenario_id": "91c982b54688f05e",
+      "review_tags": [
+        "vru_close_interaction"
+      ],
+      "payload_path": "review_payload_v2_first5\\review_payload_00000_s0280.json"
+    },
+    {
+      "source": "E:\\code\\TriggerEngine\\data\\validation_interactive.tfrecord-00001-of-00150",
+      "scenario_index": 75,
+      "scenario_id": "633ffd02681868d4",
+      "review_tags": [
+        "vru_close_interaction",
+        "vru_close_interaction"
+      ],
+      "payload_path": "review_payload_v2_first5\\review_payload_00001_s0075.json"
+    },
+    {
+      "source": "E:\\code\\TriggerEngine\\data\\validation_interactive.tfrecord-00001-of-00150",
+      "scenario_index": 145,
+      "scenario_id": "1e189f6d2abfe3a",
+      "review_tags": [
+        "vru_close_interaction"
+      ],
+      "payload_path": "review_payload_v2_first5\\review_payload_00001_s0145.json"
+    },
+    {
+      "source": "E:\\code\\TriggerEngine\\data\\validation_interactive.tfrecord-00001-of-00150",
+      "scenario_index": 151,
+      "scenario_id": "5b939999a948d17",
+      "review_tags": [
+        "vru_close_interaction"
+      ],
+      "payload_path": "review_payload_v2_first5\\review_payload_00001_s0151.json"
+    },
+    {
+      "source": "E:\\code\\TriggerEngine\\data\\validation_interactive.tfrecord-00001-of-00150",
+      "scenario_index": 179,
+      "scenario_id": "c27247bdeb51c51",
+      "review_tags": [
+        "vru_close_interaction"
+      ],
+      "payload_path": "review_payload_v2_first5\\review_payload_00001_s0179.json"
+    },
+    {
+      "source": "E:\\code\\TriggerEngine\\data\\validation_interactive.tfrecord-00001-of-00150",
+      "scenario_index": 217,
+      "scenario_id": "21972a00cf1f820f",
+      "review_tags": [
+        "vru_close_interaction"
+      ],
+      "payload_path": "review_payload_v2_first5\\review_payload_00001_s0217.json"
+    },
+    {
+      "source": "E:\\code\\TriggerEngine\\data\\validation_interactive.tfrecord-00001-of-00150",
+      "scenario_index": 256,
+      "scenario_id": "b309354493094f6d",
+      "review_tags": [
+        "vru_close_interaction",
+        "vru_close_interaction"
+      ],
+      "payload_path": "review_payload_v2_first5\\review_payload_00001_s0256.json"
+    },
+    {
+      "source": "E:\\code\\TriggerEngine\\data\\validation_interactive.tfrecord-00002-of-00150",
+      "scenario_index": 44,
+      "scenario_id": "e220537a99c2982a",
+      "review_tags": [
+        "vru_close_interaction"
+      ],
+      "payload_path": "review_payload_v2_first5\\review_payload_00002_s0044.json"
+    },
+    {
+      "source": "E:\\code\\TriggerEngine\\data\\validation_interactive.tfrecord-00002-of-00150",
+      "scenario_index": 77,
+      "scenario_id": "302e4fbf166a87c3",
+      "review_tags": [
+        "vru_close_interaction",
+        "vru_close_interaction"
+      ],
+      "payload_path": "review_payload_v2_first5\\review_payload_00002_s0077.json"
+    },
+    {
+      "source": "E:\\code\\TriggerEngine\\data\\validation_interactive.tfrecord-00002-of-00150",
+      "scenario_index": 118,
+      "scenario_id": "f4eb48c2df4dc6a9",
+      "review_tags": [
+        "vru_close_interaction"
+      ],
+      "payload_path": "review_payload_v2_first5\\review_payload_00002_s0118.json"
+    },
+    {
+      "source": "E:\\code\\TriggerEngine\\data\\validation_interactive.tfrecord-00002-of-00150",
+      "scenario_index": 203,
+      "scenario_id": "4bfa834d16d591a9",
+      "review_tags": [
+        "vru_close_interaction",
+        "vru_close_interaction",
+        "vru_close_interaction",
+        "vru_close_interaction",
+        "vru_close_interaction"
+      ],
+      "payload_path": "review_payload_v2_first5\\review_payload_00002_s0203.json"
+    },
+    {
+      "source": "E:\\code\\TriggerEngine\\data\\validation_interactive.tfrecord-00003-of-00150",
+      "scenario_index": 86,
+      "scenario_id": "87777508fd1e5953",
+      "review_tags": [
+        "cut_in_confirmed"
+      ],
+      "payload_path": "review_payload_v2_first5\\review_payload_00003_s0086.json"
+    },
+    {
+      "source": "E:\\code\\TriggerEngine\\data\\validation_interactive.tfrecord-00003-of-00150",
+      "scenario_index": 203,
+      "scenario_id": "479077ddb93ee009",
+      "review_tags": [
+        "vru_close_interaction"
+      ],
+      "payload_path": "review_payload_v2_first5\\review_payload_00003_s0203.json"
+    },
+    {
+      "source": "E:\\code\\TriggerEngine\\data\\validation_interactive.tfrecord-00004-of-00150",
+      "scenario_index": 23,
+      "scenario_id": "9c081f95be507fcc",
+      "review_tags": [
+        "vru_close_interaction",
+        "vru_close_interaction"
+      ],
+      "payload_path": "review_payload_v2_first5\\review_payload_00004_s0023.json"
+    },
+    {
+      "source": "E:\\code\\TriggerEngine\\data\\validation_interactive.tfrecord-00004-of-00150",
+      "scenario_index": 45,
+      "scenario_id": "b955ca0504ff12ba",
+      "review_tags": [
+        "sdc_hard_braking"
+      ],
+      "payload_path": "review_payload_v2_first5\\review_payload_00004_s0045.json"
+    },
+    {
+      "source": "E:\\code\\TriggerEngine\\data\\validation_interactive.tfrecord-00004-of-00150",
+      "scenario_index": 114,
+      "scenario_id": "74fab3ff97ec26c7",
+      "review_tags": [
+        "vru_close_interaction"
+      ],
+      "payload_path": "review_payload_v2_first5\\review_payload_00004_s0114.json"
+    },
+    {
+      "source": "E:\\code\\TriggerEngine\\data\\validation_interactive.tfrecord-00004-of-00150",
+      "scenario_index": 120,
+      "scenario_id": "1a1a9a0385bd2c1",
+      "review_tags": [
+        "vru_close_interaction"
+      ],
+      "payload_path": "review_payload_v2_first5\\review_payload_00004_s0120.json"
+    },
+    {
+      "source": "E:\\code\\TriggerEngine\\data\\validation_interactive.tfrecord-00004-of-00150",
+      "scenario_index": 282,
+      "scenario_id": "a0e49a5ba3c167f",
+      "review_tags": [
+        "vru_close_interaction"
+      ],
+      "payload_path": "review_payload_v2_first5\\review_payload_00004_s0282.json"
+    }
+  ],
+  "payload_outputs": [
+    "review_payload_v2_first5\\review_payload_00000_s0014.json",
+    "review_payload_v2_first5\\review_payload_00000_s0024.json",
+    "review_payload_v2_first5\\review_payload_00000_s0058.json",
+    "review_payload_v2_first5\\review_payload_00000_s0157.json",
+    "review_payload_v2_first5\\review_payload_00000_s0280.json",
+    "review_payload_v2_first5\\review_payload_00001_s0075.json",
+    "review_payload_v2_first5\\review_payload_00001_s0145.json",
+    "review_payload_v2_first5\\review_payload_00001_s0151.json",
+    "review_payload_v2_first5\\review_payload_00001_s0179.json",
+    "review_payload_v2_first5\\review_payload_00001_s0217.json",
+    "review_payload_v2_first5\\review_payload_00001_s0256.json",
+    "review_payload_v2_first5\\review_payload_00002_s0044.json",
+    "review_payload_v2_first5\\review_payload_00002_s0077.json",
+    "review_payload_v2_first5\\review_payload_00002_s0118.json",
+    "review_payload_v2_first5\\review_payload_00002_s0203.json",
+    "review_payload_v2_first5\\review_payload_00003_s0086.json",
+    "review_payload_v2_first5\\review_payload_00003_s0203.json",
+    "review_payload_v2_first5\\review_payload_00004_s0023.json",
+    "review_payload_v2_first5\\review_payload_00004_s0045.json",
+    "review_payload_v2_first5\\review_payload_00004_s0114.json",
+    "review_payload_v2_first5\\review_payload_00004_s0120.json",
+    "review_payload_v2_first5\\review_payload_00004_s0282.json"
+  ]
+}

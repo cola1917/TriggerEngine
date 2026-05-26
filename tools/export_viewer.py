@@ -83,6 +83,9 @@ _PRIMARY_TAGS = frozenset({
     "low_ttc_pair",
     "persistent_low_ttc_pair",
     "red_light_running",
+    "sdc_hard_braking",
+    "vru_close_interaction",
+    "lane_change_conflict",
 })
 _SUPPORTING_TAGS = frozenset({
     "adjacent_vehicle",
@@ -537,6 +540,11 @@ def render_viewer_html(payload: dict[str, object]) -> str:
       return (frame.agents || []).find(a => a.track_id === ids.targetId) || null;
     }}
 
+    function agentLabel(agent) {{
+      if (!agent) return 'n/a';
+      return `${{agent.track_id}} (${{agent.object_type || 'unknown'}})`;
+    }}
+
     function roleForAgent(event, trackId) {{
       const ids = pairRoleIds(event);
       if (ids) {{
@@ -603,11 +611,12 @@ def render_viewer_html(payload: dict[str, object]) -> str:
       summaryTime.textContent = (event.timestamp_seconds || 0).toFixed(2) + 's';
       summaryRule.textContent = event.rule_name || '';
       const ids = pairRoleIds(event);
+      const frame = payload.frames.find(f => f.frame_index === event.frame_index) || payload.frames[frameIndex] || payload.frames[0];
       if (ids) {{
-        summaryEgo.textContent = String(ids.egoId);
-        summaryTarget.textContent = String(ids.targetId);
+        summaryEgo.textContent = agentLabel((frame.agents || []).find(a => a.track_id === ids.egoId));
+        summaryTarget.textContent = agentLabel((frame.agents || []).find(a => a.track_id === ids.targetId));
       }} else {{
-        summaryEgo.textContent = String(event.subject_id ?? '');
+        summaryEgo.textContent = agentLabel((frame.agents || []).find(a => a.track_id === Number(event.subject_id)));
         summaryTarget.textContent = 'n/a';
       }}
       rawEventJson.textContent = JSON.stringify(event, null, 2);
@@ -840,23 +849,59 @@ def render_viewer_html(payload: dict[str, object]) -> str:
         ctx.shadowColor = role === 'EGO' ? 'rgba(15,118,110,0.42)' : 'rgba(180,83,9,0.42)';
         ctx.shadowBlur = 10;
       }}
-      ctx.beginPath();
-      ctx.rect(-length / 2, -width / 2, length, width);
-      ctx.fill();
-      ctx.shadowBlur = 0;
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(length / 2, 0);
-      ctx.lineTo(length / 2 - 6, -3);
-      ctx.lineTo(length / 2 - 6, 3);
-      ctx.closePath();
-      ctx.fillStyle = '#ffffff';
-      ctx.fill();
+      if (agent.object_type === 'pedestrian') {{
+        const radius = Math.max(3.5 * scale, 5);
+        ctx.beginPath();
+        ctx.arc(0, 0, radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(radius + 3, 0);
+        ctx.lineTo(radius - 3, -3);
+        ctx.lineTo(radius - 3, 3);
+        ctx.closePath();
+        ctx.fillStyle = '#ffffff';
+        ctx.fill();
+      }} else if (agent.object_type === 'cyclist') {{
+        const l = Math.max(agent.length * scale, 10);
+        const w = Math.max(agent.width * scale, 6);
+        ctx.beginPath();
+        ctx.moveTo(l / 2, 0);
+        ctx.lineTo(0, -w / 2);
+        ctx.lineTo(-l / 2, 0);
+        ctx.lineTo(0, w / 2);
+        ctx.closePath();
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(l / 2 + 2, 0);
+        ctx.lineTo(l / 2 - 5, -3);
+        ctx.lineTo(l / 2 - 5, 3);
+        ctx.closePath();
+        ctx.fillStyle = '#ffffff';
+        ctx.fill();
+      }} else {{
+        ctx.beginPath();
+        ctx.rect(-length / 2, -width / 2, length, width);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(length / 2, 0);
+        ctx.lineTo(length / 2 - 6, -3);
+        ctx.lineTo(length / 2 - 6, 3);
+        ctx.closePath();
+        ctx.fillStyle = '#ffffff';
+        ctx.fill();
+      }}
       ctx.restore();
 
       ctx.fillStyle = role === 'TARGET' ? '#78350f' : selected ? '#064e3b' : '#334155';
       ctx.font = role ? 'bold 12px system-ui' : '11px system-ui';
-      ctx.fillText(String(agent.track_id), p.x + 4, p.y - 4);
+      const typeHint = agent.object_type === 'pedestrian' ? 'P' : (agent.object_type === 'cyclist' ? 'C' : '');
+      ctx.fillText(typeHint ? `${{agent.track_id}}/${{typeHint}}` : String(agent.track_id), p.x + 4, p.y - 4);
     }}
 
     function drawPairLine(frame, ids) {{

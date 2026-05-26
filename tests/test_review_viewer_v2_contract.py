@@ -24,6 +24,24 @@ def agent(track_id, step, x, y, valid=True):
     )
 
 
+def typed_agent(track_id, step, x, y, object_type):
+    base = agent(track_id, step, x, y)
+    return AgentState(
+        track_id=base.track_id,
+        track_index=base.track_index,
+        object_type=object_type,
+        timestamp_seconds=base.timestamp_seconds,
+        center=base.center,
+        velocity_x=base.velocity_x,
+        velocity_y=base.velocity_y,
+        heading=base.heading,
+        length=1.0 if object_type != "vehicle" else base.length,
+        width=0.8 if object_type != "vehicle" else base.width,
+        height=base.height,
+        valid=base.valid,
+    )
+
+
 def frame(step, phase, x=0.0, y=0.0):
     return AlignedFrame(
         frame=Frame(
@@ -412,6 +430,82 @@ class ReviewViewerV2ContractTests(unittest.TestCase):
 
         self.assertIn('<canvas id="canvas" width="720" height="420">', html)
         self.assertIn("review-shell", html)
+
+    def test_rendered_viewer_distinguishes_vru_target_types(self):
+        from tools.export_viewer import render_viewer_html
+
+        payload = {
+            "scenario_id": "scenario-vru-view",
+            "source": "unit",
+            "plan_id": "classic_v1",
+            "frames": [
+                {
+                    "frame_index": 0,
+                    "timestamp_seconds": 0.0,
+                    "phase": "current",
+                    "agents": [
+                        {
+                            "track_id": 1,
+                            "track_index": 1,
+                            "object_type": "vehicle",
+                            "valid": True,
+                            "x": 0.0,
+                            "y": 0.0,
+                            "z": 0.0,
+                            "heading": 0.0,
+                            "length": 4.0,
+                            "width": 1.8,
+                            "height": 1.5,
+                            "velocity_x": 1.0,
+                            "velocity_y": 0.0,
+                        },
+                        {
+                            "track_id": 2,
+                            "track_index": 2,
+                            "object_type": "pedestrian",
+                            "valid": True,
+                            "x": 5.0,
+                            "y": 1.0,
+                            "z": 0.0,
+                            "heading": 0.0,
+                            "length": 1.0,
+                            "width": 0.8,
+                            "height": 1.5,
+                            "velocity_x": 0.0,
+                            "velocity_y": 0.0,
+                        },
+                    ],
+                    "traffic_lights": [],
+                }
+            ],
+            "events": [
+                {
+                    "scenario_id": "scenario-vru-view",
+                    "source": "unit",
+                    "frame_index": 0,
+                    "timestamp_seconds": 0.0,
+                    "tag_name": "vru_close_interaction",
+                    "subject_type": "agent_pair",
+                    "subject_id": "1:2",
+                    "value": True,
+                    "rule_name": "vru_close_interaction",
+                    "metadata": {"intent": "review"},
+                }
+            ],
+            "review_events": [],
+            "review_event_indices": [0],
+            "event_groups": {"primary": [0], "supporting": [], "debug": []},
+            "map_features": [],
+            "view": {"scenario_bounds": {"min_x": -10, "max_x": 10, "min_y": -10, "max_y": 10}},
+            "stats": {},
+            "diagnostics": [],
+        }
+
+        html = render_viewer_html(payload)
+
+        self.assertIn("agent.object_type === 'pedestrian'", html)
+        self.assertIn("agent.object_type === 'cyclist'", html)
+        self.assertIn("agentLabel", html)
         self.assertIn("event-card", html)
         self.assertIn("scene-panel", html)
         self.assertIn("summary-panel", html)

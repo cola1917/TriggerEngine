@@ -21,6 +21,19 @@ class PairCandidatePredicate:
             max_lat = float(self.args["max_lateral_m"])
             max_long = float(self.args["max_longitudinal_m"])
             return math.sqrt(max_lat * max_lat + max_long * max_long)
+        if self.operator_name == "predicate.pair_ego_hard_braking":
+            max_lat = float(self.args.get("max_lateral_m", 4.0))
+            max_long = float(self.args.get("max_front_longitudinal_m", 40.0))
+            return math.sqrt(max_lat * max_lat + max_long * max_long)
+        if self.operator_name == "predicate.vru_close_interaction":
+            return float(self.args.get("max_distance_m", 15.0))
+        if self.operator_name == "predicate.sdc_lane_change_conflict":
+            max_lat = float(self.args.get("max_lateral_m", 3.0))
+            max_long = max(
+                float(self.args.get("max_front_longitudinal_m", 25.0)),
+                float(self.args.get("max_behind_longitudinal_m", 20.0)),
+            )
+            return math.sqrt(max_lat * max_lat + max_long * max_long)
         return None
 
     def matches(self, ego, other) -> bool:
@@ -55,6 +68,25 @@ class PairCandidatePredicate:
             return (
                 lat_abs <= float(self.args.get("max_lateral_m", 4.0))
                 and lon > 0.0
+            )
+        if self.operator_name == "predicate.pair_ego_hard_braking":
+            return (
+                0.0 <= lon <= float(self.args.get("max_front_longitudinal_m", 40.0))
+                and lat_abs <= float(self.args.get("max_lateral_m", 4.0))
+            )
+        if self.operator_name == "predicate.vru_close_interaction":
+            return (
+                float(self.args.get("min_longitudinal_m", -5.0))
+                <= lon
+                <= float(self.args.get("max_longitudinal_m", 20.0))
+                and lat_abs <= float(self.args.get("max_lateral_m", 8.0))
+            )
+        if self.operator_name == "predicate.sdc_lane_change_conflict":
+            return (
+                -float(self.args.get("max_behind_longitudinal_m", 20.0))
+                <= lon
+                <= float(self.args.get("max_front_longitudinal_m", 25.0))
+                and lat_abs <= float(self.args.get("max_lateral_m", 3.0))
             )
         return True
 
@@ -131,6 +163,18 @@ class PairGeometryCache:
             elif predicate.operator_name == "predicate.low_ttc":
                 mask &= lat_abs <= float(args.get("max_lateral_m", 4.0))
                 mask &= lon > 0.0
+            elif predicate.operator_name == "predicate.pair_ego_hard_braking":
+                mask &= lon >= 0.0
+                mask &= lon <= float(args.get("max_front_longitudinal_m", 40.0))
+                mask &= lat_abs <= float(args.get("max_lateral_m", 4.0))
+            elif predicate.operator_name == "predicate.vru_close_interaction":
+                mask &= lon >= float(args.get("min_longitudinal_m", -5.0))
+                mask &= lon <= float(args.get("max_longitudinal_m", 20.0))
+                mask &= lat_abs <= float(args.get("max_lateral_m", 8.0))
+            elif predicate.operator_name == "predicate.sdc_lane_change_conflict":
+                mask &= lon >= -float(args.get("max_behind_longitudinal_m", 20.0))
+                mask &= lon <= float(args.get("max_front_longitudinal_m", 25.0))
+                mask &= lat_abs <= float(args.get("max_lateral_m", 3.0))
 
         ego_indices, other_indices = np.nonzero(mask)
         return [
@@ -421,6 +465,9 @@ def _candidate_predicate_for(
         "predicate.same_path_overlap",
         "predicate.pair_in_front",
         "predicate.low_ttc",
+        "predicate.pair_ego_hard_braking",
+        "predicate.vru_close_interaction",
+        "predicate.sdc_lane_change_conflict",
     }:
         return PairCandidatePredicate(operator_name, dict(args))
     return None

@@ -27,6 +27,55 @@ def _rotate(dx: float, dy: float, heading: float) -> tuple[float, float]:
     return dx * cos_h + dy * sin_h, -dx * sin_h + dy * cos_h
 
 
+def _agent_in_frame(aligned_frame, track_id: int):
+    return next(
+        (
+            agent
+            for agent in aligned_frame.frame.agent_states
+            if agent.track_id == track_id and agent.valid
+        ),
+        None,
+    )
+
+
+def _agent_speed_change_over_window(context, frame, track_id: int, window_seconds: float):
+    if context is None:
+        return None
+    current = _agent_in_frame(frame, track_id)
+    if current is None:
+        return None
+
+    start_time = frame.frame.timestamp_seconds - window_seconds
+    earliest = None
+    for aligned_frame in context.input_frames:
+        ts = aligned_frame.frame.timestamp_seconds
+        if ts < start_time or ts > frame.frame.timestamp_seconds:
+            continue
+        candidate = _agent_in_frame(aligned_frame, track_id)
+        if candidate is not None:
+            earliest = (aligned_frame, candidate)
+            break
+    if earliest is None:
+        return None
+
+    start_frame, start_agent = earliest
+    dt = frame.frame.timestamp_seconds - start_frame.frame.timestamp_seconds
+    if dt <= 0:
+        return None
+
+    start_speed = _speed(start_agent)
+    end_speed = _speed(current)
+    return {
+        "start_frame_index": start_frame.frame.step_index,
+        "end_frame_index": frame.frame.step_index,
+        "window_seconds": dt,
+        "start_speed_mps": start_speed,
+        "end_speed_mps": end_speed,
+        "speed_delta_mps": end_speed - start_speed,
+        "acceleration_mps2": (end_speed - start_speed) / dt,
+    }
+
+
 class TypeIsOperator:
     name = "predicate.type_is"
     result_kind = "predicate"
@@ -93,6 +142,22 @@ class PairTypesAreOperator:
             frame.frame.step_index, frame.frame.timestamp_seconds,
             ego_ok and other_ok,
             {"ego_type": subject.ego.object_type, "other_type": subject.other.object_type},
+        )
+
+
+class PairOtherTypeInOperator:
+    name = "predicate.pair_other_type_in"
+    result_kind = "predicate"
+    subject_type = "agent_pair"
+
+    def evaluate(self, context, frame, subject, args):
+        types = set(args["object_types"])
+        value = subject.ego.valid and subject.other.valid and subject.other.object_type in types
+        return OperatorResult(
+            self.name, "agent_pair", subject.subject_id,
+            frame.frame.step_index, frame.frame.timestamp_seconds,
+            value,
+            {"other_type": subject.other.object_type, "object_types": sorted(types)},
         )
 
 
@@ -382,6 +447,133 @@ class PairOtherSpeedAboveOperator:
             frame.frame.step_index, frame.frame.timestamp_seconds,
             value,
             {"other_speed_mps": speed, "threshold_mps": threshold},
+        )
+
+
+class PairEgoHardBrakingOperator:
+    name = "predicate.pair_ego_hard_braking"
+    result_kind = "predicate"
+    subject_type = "agent_pair"
+
+    def evaluate(self, context, frame, subject, args):
+        if not subject.ego.valid or not subject.other.valid:
+            return OperatorResult(
+                self.name, "agent_pair", subject.subject_id,
+                frame.frame.step_index, frame.frame.timestamp_seconds,
+                False, {},
+            )
+
+        allowed_types = set(args.get("other_types", ("vehicle", "pedestrian", "cyclist")))
+        if subject.other.object_type not in allowed_types:
+            return OperatorResult(
+                self.name, "agent_pair", subject.subject_id,
+                frame.frame.step_index, frame.frame.timestamp_seconds,
+                False, {"other_type": subject.other.object_type},
+            )
+
+        dx = subject.other.center.x - subject.ego.center.x
+        dy = subject.other.center.y - subject.ego.center.y
+        lon, lat = _rotate(dx, dy, subject.ego.heading)
+        max_front = args.get("max_front_longitudinal_m", 40.0)
+        max_lat = args.get("max_lateral_m", 4.0)
+        if lon < 0.0 or lon > max_front or abs(lat) > max_lat:
+            return OperatorResult(
+                self.name, "agent_pair", subject.subject_id,
+                frame.frame.step_index, frame.frame.timestamp_seconds,
+                False, {"longitudinal_m": lon, "lateral_m": lat},
+            )
+
+        motion = _agent_speed_change_over_window(
+            context, frame, subject.ego.track_id, args.get("window_seconds", 1.0)
+        )
+        if motion is None:
+            return OperatorResult(
+                self.name, "agent_pair", subject.subject_id,
+                frame.frame.step_index, frame.frame.timestamp_seconds,
+                False, {"longitudinal_m": lon, "lateral_m": lat},
+            )
+
+        max_acceleration = args["max_acceleration_mps2"]
+        min_speed_drop = args.get("min_speed_drop_mps", 0.0)
+        min_start_speed = args.get("min_start_speed_mps", 0.0)
+        speed_drop = -motion["speed_delta_mps"]
+        value = (
+            motion["acceleration_mps2"] <= max_acceleration
+            and speed_drop >= min_speed_drop
+            and motion["start_speed_mps"] >= min_start_speed
+        )
+        metadata = {
+            **motion,
+            "speed_drop_mps": speed_drop,
+            "longitudinal_m": lon,
+            "lateral_m": lat,
+            "other_type": subject.other.object_type,
+        }
+        return OperatorResult(
+            self.name, "agent_pair", subject.subject_id,
+            frame.frame.step_index, frame.frame.timestamp_seconds,
+            value, metadata,
+        )
+
+
+class VruCloseInteractionOperator:
+    name = "predicate.vru_close_interaction"
+    result_kind = "predicate"
+    subject_type = "agent_pair"
+
+    def evaluate(self, context, frame, subject, args):
+        if not subject.ego.valid or not subject.other.valid:
+            return OperatorResult(
+                self.name, "agent_pair", subject.subject_id,
+                frame.frame.step_index, frame.frame.timestamp_seconds,
+                False, {},
+            )
+        vru_types = set(args.get("vru_types", ("pedestrian", "cyclist")))
+        if subject.ego.object_type != "vehicle" or subject.other.object_type not in vru_types:
+            return OperatorResult(
+                self.name, "agent_pair", subject.subject_id,
+                frame.frame.step_index, frame.frame.timestamp_seconds,
+                False,
+                {"ego_type": subject.ego.object_type, "other_type": subject.other.object_type},
+            )
+
+        dx = subject.other.center.x - subject.ego.center.x
+        dy = subject.other.center.y - subject.ego.center.y
+        lon, lat = _rotate(dx, dy, subject.ego.heading)
+        distance = math.sqrt(dx * dx + dy * dy)
+        ego_speed = _speed(subject.ego)
+        other_speed = _speed(subject.other)
+        dvx = subject.ego.velocity_x - subject.other.velocity_x
+        dvy = subject.ego.velocity_y - subject.other.velocity_y
+        closing_speed, lateral_closing_speed = _rotate(dvx, dvy, subject.ego.heading)
+
+        min_lon = args.get("min_longitudinal_m", -5.0)
+        max_lon = args.get("max_longitudinal_m", 20.0)
+        max_lat = args.get("max_lateral_m", 8.0)
+        max_distance = args.get("max_distance_m", 15.0)
+        min_ego_speed = args.get("min_ego_speed_mps", 0.0)
+        min_closing = args.get("min_closing_speed_mps", -float("inf"))
+        value = (
+            min_lon <= lon <= max_lon
+            and abs(lat) <= max_lat
+            and distance <= max_distance
+            and ego_speed >= min_ego_speed
+            and closing_speed >= min_closing
+        )
+        return OperatorResult(
+            self.name, "agent_pair", subject.subject_id,
+            frame.frame.step_index, frame.frame.timestamp_seconds,
+            value,
+            {
+                "longitudinal_m": lon,
+                "lateral_m": lat,
+                "distance_m": distance,
+                "ego_speed_mps": ego_speed,
+                "vru_speed_mps": other_speed,
+                "closing_speed_mps": closing_speed,
+                "lateral_closing_speed_mps": lateral_closing_speed,
+                "vru_type": subject.other.object_type,
+            },
         )
 
 
@@ -1091,6 +1283,168 @@ class SdcRepeatedLaneChangeOperator:
         )
 
 
+class SdcLaneChangeConflictOperator:
+    name = "predicate.sdc_lane_change_conflict"
+    result_kind = "predicate"
+    subject_type = "agent_pair"
+
+    def evaluate(self, context, frame, subject, args):
+        if not subject.ego.valid or not subject.other.valid:
+            return OperatorResult(
+                self.name, "agent_pair", subject.subject_id,
+                frame.frame.step_index, frame.frame.timestamp_seconds,
+                False, {},
+            )
+        if context is None or not context.map_features:
+            return OperatorResult(
+                self.name, "agent_pair", subject.subject_id,
+                frame.frame.step_index, frame.frame.timestamp_seconds,
+                False, {},
+            )
+        if subject.ego.object_type != "vehicle" or subject.other.object_type != "vehicle":
+            return OperatorResult(
+                self.name, "agent_pair", subject.subject_id,
+                frame.frame.step_index, frame.frame.timestamp_seconds,
+                False,
+                {"ego_type": subject.ego.object_type, "other_type": subject.other.object_type},
+            )
+
+        from .lane_matching import match_agent_to_lane_cached
+
+        window_seconds = args.get("window_seconds", 3.0)
+        max_lane_lateral = args.get("max_lane_lateral_m", 1.8)
+        max_heading = args.get("max_heading_delta_rad", 0.7)
+        min_lateral_displacement = args.get("min_lateral_displacement_m", 1.5)
+        current_time = frame.frame.timestamp_seconds
+
+        ego_matches = []
+        first_agent = None
+        last_agent = None
+        for af in context.input_frames:
+            ts = af.frame.timestamp_seconds
+            if ts < current_time - window_seconds or ts > current_time:
+                continue
+            ego_agent = _agent_in_frame(af, subject.ego.track_id)
+            if ego_agent is None:
+                continue
+            match = match_agent_to_lane_cached(
+                context,
+                ego_agent,
+                context.map_features,
+                max_lateral_m=max_lane_lateral,
+                max_heading_delta_rad=max_heading,
+            )
+            if match is None:
+                continue
+            if first_agent is None:
+                first_agent = ego_agent
+            last_agent = ego_agent
+            ego_matches.append((af.frame.step_index, ts, match.lane_id))
+
+        if len(ego_matches) < 2:
+            return OperatorResult(
+                self.name, "agent_pair", subject.subject_id,
+                frame.frame.step_index, frame.frame.timestamp_seconds,
+                False, {"matched_frames": len(ego_matches)},
+            )
+        previous_lane_id = ego_matches[0][2]
+        current_lane_id = ego_matches[-1][2]
+        if previous_lane_id == current_lane_id:
+            return OperatorResult(
+                self.name, "agent_pair", subject.subject_id,
+                frame.frame.step_index, frame.frame.timestamp_seconds,
+                False, {"lane_sequence": [m[2] for m in ego_matches]},
+            )
+
+        lateral_displacement = 0.0
+        if first_agent is not None and last_agent is not None:
+            dx = last_agent.center.x - first_agent.center.x
+            dy = last_agent.center.y - first_agent.center.y
+            _, lateral_displacement = _rotate(dx, dy, first_agent.heading)
+            lateral_displacement = abs(lateral_displacement)
+        if lateral_displacement < min_lateral_displacement:
+            return OperatorResult(
+                self.name, "agent_pair", subject.subject_id,
+                frame.frame.step_index, frame.frame.timestamp_seconds,
+                False,
+                {
+                    "lane_sequence": [m[2] for m in ego_matches],
+                    "lateral_displacement_m": lateral_displacement,
+                },
+            )
+
+        other_match = match_agent_to_lane_cached(
+            context,
+            subject.other,
+            context.map_features,
+            max_lateral_m=args.get("target_lane_lateral_m", 2.2),
+            max_heading_delta_rad=max_heading,
+        )
+        if other_match is not None and other_match.lane_id != current_lane_id:
+            return OperatorResult(
+                self.name, "agent_pair", subject.subject_id,
+                frame.frame.step_index, frame.frame.timestamp_seconds,
+                False,
+                {
+                    "ego_current_lane_id": current_lane_id,
+                    "other_lane_id": other_match.lane_id,
+                },
+            )
+
+        dx = subject.other.center.x - subject.ego.center.x
+        dy = subject.other.center.y - subject.ego.center.y
+        lon, lat = _rotate(dx, dy, subject.ego.heading)
+        max_front = args.get("max_front_longitudinal_m", 25.0)
+        max_behind = args.get("max_behind_longitudinal_m", 20.0)
+        max_lateral = args.get("max_lateral_m", 3.0)
+        if lon > max_front or lon < -max_behind or abs(lat) > max_lateral:
+            return OperatorResult(
+                self.name, "agent_pair", subject.subject_id,
+                frame.frame.step_index, frame.frame.timestamp_seconds,
+                False, {"longitudinal_m": lon, "lateral_m": lat},
+            )
+
+        ego_forward_speed, _ = _rotate(subject.ego.velocity_x, subject.ego.velocity_y, subject.ego.heading)
+        other_forward_speed, _ = _rotate(subject.other.velocity_x, subject.other.velocity_y, subject.ego.heading)
+        max_ttc = args.get("max_ttc_s", 4.0)
+        min_closing = args.get("min_closing_speed_mps", 0.5)
+        ttc = float("inf")
+        conflict_mode = None
+        if lon >= 0:
+            closing = ego_forward_speed - other_forward_speed
+            if closing >= min_closing:
+                ttc = lon / closing if closing > 0 else float("inf")
+                if ttc <= max_ttc:
+                    conflict_mode = "front_target"
+        else:
+            closing = other_forward_speed - ego_forward_speed
+            gap = abs(lon)
+            if closing >= min_closing:
+                ttc = gap / closing if closing > 0 else float("inf")
+                if ttc <= max_ttc:
+                    conflict_mode = "rear_target"
+
+        value = conflict_mode is not None
+        return OperatorResult(
+            self.name, "agent_pair", subject.subject_id,
+            frame.frame.step_index, frame.frame.timestamp_seconds,
+            value,
+            {
+                "previous_lane_id": previous_lane_id,
+                "current_lane_id": current_lane_id,
+                "other_lane_id": other_match.lane_id if other_match is not None else None,
+                "lane_sequence": [m[2] for m in ego_matches],
+                "lateral_displacement_m": lateral_displacement,
+                "longitudinal_m": lon,
+                "lateral_m": lat,
+                "ego_forward_speed_mps": ego_forward_speed,
+                "other_forward_speed_mps": other_forward_speed,
+                "ttc_s": ttc,
+                "conflict_mode": conflict_mode,
+            },
+        )
+
+
 class SameLaneOrPathOperator:
     name = "predicate.same_lane_or_path"
     result_kind = "predicate"
@@ -1182,6 +1536,7 @@ def register_builtin_operators(registry: OperatorRegistry) -> None:
         SpeedBelowOperator(),
         SpeedAboveOperator(),
         PairTypesAreOperator(),
+        PairOtherTypeInOperator(),
         PairInFrontOperator(),
         LowTtcOperator(),
         CloseLateralGapOperator(),
@@ -1192,11 +1547,14 @@ def register_builtin_operators(registry: OperatorRegistry) -> None:
         SamePathOverlapOperator(),
         PairEgoSpeedAboveOperator(),
         PairOtherSpeedAboveOperator(),
+        PairEgoHardBrakingOperator(),
+        VruCloseInteractionOperator(),
         RedLightBeforeStopLineOperator(),
         RedLightAfterStopLineOperator(),
         RedLightCrossingTransitionOperator(),
         SdcLaneChangedOperator(),
         SdcRepeatedLaneChangeOperator(),
+        SdcLaneChangeConflictOperator(),
         SameLaneOrPathOperator(),
     ]
     for op in operators:
