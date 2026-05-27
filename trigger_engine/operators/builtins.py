@@ -535,6 +535,12 @@ class PairEgoHardBrakingOperator:
             traffic_control_context = red_stop["red_light_stop_longitudinal_m"] <= lon + margin
         risk_level = "medium" if traffic_control_context else "high"
         risk_reasons = ("traffic_control_stop",) if traffic_control_context else ()
+        braking_category = "traffic_light" if traffic_control_context else "interaction"
+        review_subtype = (
+            "sdc_traffic_light_braking"
+            if traffic_control_context
+            else "sdc_interaction_braking"
+        )
         metadata = {
             **motion,
             "speed_drop_mps": speed_drop,
@@ -542,6 +548,8 @@ class PairEgoHardBrakingOperator:
             "lateral_m": lat,
             "other_type": subject.other.object_type,
             "traffic_control_context": traffic_control_context,
+            "braking_category": braking_category,
+            "review_subtype": review_subtype,
             "risk_level": risk_level if value else None,
             "risk_reasons": risk_reasons,
         }
@@ -552,6 +560,8 @@ class PairEgoHardBrakingOperator:
                 "risk_level": risk_level,
                 "risk_reasons": risk_reasons,
                 "traffic_control_context": traffic_control_context,
+                "braking_category": braking_category,
+                "review_subtype": review_subtype,
             }
             if red_stop is not None:
                 event_metadata.update(red_stop)

@@ -100,6 +100,8 @@ class V2TriggerRulesContractTests(unittest.TestCase):
         self.assertEqual(hard_brake.subject_type, "sdc_pair")
         self.assertEqual(hard_brake.subject_id, "1:2")
         self.assertEqual(hard_brake.metadata["risk_level"], "high")
+        self.assertEqual(hard_brake.metadata["braking_category"], "interaction")
+        self.assertEqual(hard_brake.metadata["review_subtype"], "sdc_interaction_braking")
 
     def test_red_light_hard_braking_is_medium_candidate(self):
         red_light = TrafficLightState(
@@ -128,6 +130,8 @@ class V2TriggerRulesContractTests(unittest.TestCase):
 
         self.assertEqual(hard_brake.metadata["risk_level"], "medium")
         self.assertTrue(hard_brake.metadata["traffic_control_context"])
+        self.assertEqual(hard_brake.metadata["braking_category"], "traffic_light")
+        self.assertEqual(hard_brake.metadata["review_subtype"], "sdc_traffic_light_braking")
         self.assertEqual(hard_brake.metadata["risk_reasons"], ("traffic_control_stop",))
         self.assertEqual(hard_brake.metadata["red_light_lane_id"], 7)
 

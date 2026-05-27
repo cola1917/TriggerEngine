@@ -147,7 +147,7 @@ class ExportViewerContractTests(unittest.TestCase):
         self.assertEqual(payload["review_summary"]["candidate_event_count"], 1)
         self.assertEqual(payload["review_summary"]["event_counts_by_risk"], {"medium": 1})
 
-    def test_medium_hard_braking_event_is_kept_but_not_default_review(self):
+    def test_medium_hard_braking_event_stays_default_review_with_subtype(self):
         from tools.export_viewer import build_viewer_payload
 
         event = TagEvent(
@@ -164,6 +164,7 @@ class ExportViewerContractTests(unittest.TestCase):
                 "intent": "review",
                 "risk_level": "medium",
                 "traffic_control_context": True,
+                "review_subtype": "sdc_traffic_light_braking",
             },
         )
         result = EngineResult(
@@ -183,8 +184,8 @@ class ExportViewerContractTests(unittest.TestCase):
 
         payload = build_viewer_payload(make_context(), result)
 
-        self.assertEqual(payload["review_event_indices"], [])
-        self.assertEqual(payload["event_groups"]["supporting"], [0])
+        self.assertEqual(payload["review_event_indices"], [0])
+        self.assertEqual(payload["event_groups"]["primary"], [0])
         self.assertEqual(payload["review_summary"]["event_counts_by_risk"], {"medium": 1})
 
     def test_event_explanation_extracts_operator_metrics(self):

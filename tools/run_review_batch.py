@@ -39,21 +39,25 @@ def should_keep_payload_event(event) -> bool:
     metadata = event.metadata if hasattr(event, "metadata") else event.get("metadata", {})
     tag = event.tag_name if hasattr(event, "tag_name") else event.get("tag_name", "")
     return (
-        tag in {"vru_close_interaction", "sdc_hard_braking"}
+        tag == "vru_close_interaction"
         and isinstance(metadata, dict)
         and metadata.get("risk_level") == "medium"
     )
 
 
 def _count_events(events: list) -> dict[str, object]:
-    from tools.export_viewer import event_risk_level, event_tag, event_target_id
+    from tools.export_viewer import event_metadata, event_risk_level, event_tag, event_target_id
 
     tag_counts = Counter()
     risk_counts = Counter()
+    subtype_counts = Counter()
     targets = set()
     for event in events:
         tag_counts[event_tag(event)] += 1
         risk_counts[event_risk_level(event)] += 1
+        subtype = event_metadata(event).get("review_subtype")
+        if subtype is not None:
+            subtype_counts[str(subtype)] += 1
         target_id = event_target_id(event)
         if target_id is not None:
             targets.add(target_id)
@@ -61,6 +65,7 @@ def _count_events(events: list) -> dict[str, object]:
         "event_count": len(events),
         "tag_counts": dict(sorted(tag_counts.items())),
         "risk_counts": dict(sorted(risk_counts.items())),
+        "subtype_counts": dict(sorted(subtype_counts.items())),
         "unique_target_count": len(targets),
         "unique_target_ids": sorted(targets),
     }
@@ -83,6 +88,8 @@ def evaluate_shard(path_text: str, payload_options: dict | None = None) -> dict:
     candidate_counts = Counter()
     review_risk_counts = Counter()
     candidate_risk_counts = Counter()
+    review_subtype_counts = Counter()
+    candidate_subtype_counts = Counter()
     review_refs = []
     payload_outputs = []
     payload_scenarios = 0
@@ -130,6 +137,10 @@ def evaluate_shard(path_text: str, payload_options: dict | None = None) -> dict:
             review_risk_counts[risk] += count
         for risk, count in payload_event_stats["risk_counts"].items():
             candidate_risk_counts[risk] += count
+        for subtype, count in review_event_stats["subtype_counts"].items():
+            review_subtype_counts[subtype] += count
+        for subtype, count in payload_event_stats["subtype_counts"].items():
+            candidate_subtype_counts[subtype] += count
         ref = {
             "source": str(path),
             "scenario_index": scenario_index,
@@ -140,6 +151,8 @@ def evaluate_shard(path_text: str, payload_options: dict | None = None) -> dict:
             "unique_target_count": payload_event_stats["unique_target_count"],
             "risk_counts": review_event_stats["risk_counts"],
             "candidate_risk_counts": payload_event_stats["risk_counts"],
+            "subtype_counts": review_event_stats["subtype_counts"],
+            "candidate_subtype_counts": payload_event_stats["subtype_counts"],
             "event_explanations": [event_explanation(event) for event in review_events],
         }
         if payload_options is not None:
@@ -175,6 +188,8 @@ def evaluate_shard(path_text: str, payload_options: dict | None = None) -> dict:
             "candidate_event_counts": dict(sorted(candidate_counts.items())),
             "review_risk_counts": dict(sorted(review_risk_counts.items())),
             "candidate_risk_counts": dict(sorted(candidate_risk_counts.items())),
+            "review_subtype_counts": dict(sorted(review_subtype_counts.items())),
+            "candidate_subtype_counts": dict(sorted(candidate_subtype_counts.items())),
         },
         "seconds": elapsed,
         "timings": dict(sorted(timings.items())),
@@ -188,6 +203,8 @@ def merge_shard_summaries(shards: list[dict], elapsed: float) -> dict:
     candidate_counts = Counter()
     review_risk_counts = Counter()
     candidate_risk_counts = Counter()
+    review_subtype_counts = Counter()
+    candidate_subtype_counts = Counter()
     timings = Counter()
     files = {}
     review_refs = []
@@ -211,6 +228,8 @@ def merge_shard_summaries(shards: list[dict], elapsed: float) -> dict:
         candidate_counts.update(quality.get("candidate_event_counts", {}))
         review_risk_counts.update(quality.get("review_risk_counts", {}))
         candidate_risk_counts.update(quality.get("candidate_risk_counts", {}))
+        review_subtype_counts.update(quality.get("review_subtype_counts", {}))
+        candidate_subtype_counts.update(quality.get("candidate_subtype_counts", {}))
         timings.update(shard.get("timings", {}))
         review_refs.extend(shard.get("review_scenario_refs", []))
 
@@ -230,6 +249,8 @@ def merge_shard_summaries(shards: list[dict], elapsed: float) -> dict:
             "candidate_event_counts": dict(sorted(candidate_counts.items())),
             "review_risk_counts": dict(sorted(review_risk_counts.items())),
             "candidate_risk_counts": dict(sorted(candidate_risk_counts.items())),
+            "review_subtype_counts": dict(sorted(review_subtype_counts.items())),
+            "candidate_subtype_counts": dict(sorted(candidate_subtype_counts.items())),
             "top_multi_event_scenarios": sorted(
                 multi_event_refs,
                 key=lambda ref: (

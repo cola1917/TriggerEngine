@@ -13,21 +13,26 @@ class ReviewBatchRunnerContractTests(unittest.TestCase):
                 "metadata": {"intent": "review", "risk_level": "high"},
             },
             {
-                "tag_name": "vru_close_interaction",
+                "tag_name": "sdc_hard_braking",
                 "subject_type": "sdc_pair",
                 "subject_id": "1:21",
-                "metadata": {"intent": "review", "risk_level": "medium"},
+                "metadata": {
+                    "intent": "review",
+                    "risk_level": "medium",
+                    "review_subtype": "sdc_traffic_light_braking",
+                },
             },
         ]
 
         stats = _count_events(events)
 
         self.assertEqual(stats["event_count"], 2)
-        self.assertEqual(stats["tag_counts"], {"vru_close_interaction": 2})
+        self.assertEqual(stats["tag_counts"], {"sdc_hard_braking": 1, "vru_close_interaction": 1})
         self.assertEqual(stats["risk_counts"], {"high": 1, "medium": 1})
+        self.assertEqual(stats["subtype_counts"], {"sdc_traffic_light_braking": 1})
         self.assertEqual(stats["unique_target_count"], 2)
 
-    def test_medium_vru_is_kept_for_payload_but_not_default_review(self):
+    def test_medium_vru_is_kept_for_payload_but_medium_hard_brake_is_review(self):
         from tools.export_viewer import classify_event_group
         from tools.run_review_batch import should_keep_payload_event
 
@@ -42,7 +47,7 @@ class ReviewBatchRunnerContractTests(unittest.TestCase):
 
         self.assertEqual(classify_event_group(vru_event), "supporting")
         self.assertTrue(should_keep_payload_event(vru_event))
-        self.assertEqual(classify_event_group(hard_brake_event), "supporting")
+        self.assertEqual(classify_event_group(hard_brake_event), "primary")
         self.assertTrue(should_keep_payload_event(hard_brake_event))
 
     def test_merge_shard_summaries_is_deterministic_and_counts_reviews(self):
@@ -62,6 +67,8 @@ class ReviewBatchRunnerContractTests(unittest.TestCase):
                         "candidate_event_counts": {"cut_in_confirmed": 1, "vru_close_interaction": 2},
                         "review_risk_counts": {"high": 1},
                         "candidate_risk_counts": {"high": 1, "medium": 2},
+                        "review_subtype_counts": {"sdc_traffic_light_braking": 1},
+                        "candidate_subtype_counts": {"sdc_traffic_light_braking": 1},
                     },
                     "seconds": 2.0,
                     "timings": {"engine_seconds": 1.0},
@@ -90,6 +97,8 @@ class ReviewBatchRunnerContractTests(unittest.TestCase):
                         "candidate_event_counts": {"red_light_running": 1},
                         "review_risk_counts": {"high": 1},
                         "candidate_risk_counts": {"high": 1},
+                        "review_subtype_counts": {},
+                        "candidate_subtype_counts": {},
                     },
                     "seconds": 1.0,
                     "timings": {"engine_seconds": 0.5},
@@ -122,6 +131,10 @@ class ReviewBatchRunnerContractTests(unittest.TestCase):
         self.assertEqual(
             summary["review_quality"]["candidate_risk_counts"],
             {"high": 2, "medium": 2},
+        )
+        self.assertEqual(
+            summary["review_quality"]["review_subtype_counts"],
+            {"sdc_traffic_light_braking": 1},
         )
         self.assertEqual(summary["review_quality"]["top_multi_event_scenarios"][0]["scenario_id"], "b")
         self.assertEqual(summary["timings"], {"engine_seconds": 1.5})
