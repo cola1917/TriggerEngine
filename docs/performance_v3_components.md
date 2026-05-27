@@ -145,3 +145,26 @@ First-five-shard profile after this pass:
 The remaining dominant costs are lane matching in `lane_change_conflict` and
 `sdc_repeated_lane_change`. Further optimization should focus on lane-match
 reuse or on narrowing/removing repeated lane-change review semantics.
+
+## Lane Review Lateral Gate
+
+The second follow-up optimization kept the lane-review semantics but reduced
+unnecessary map matching:
+
+- `lane_change_conflict` and `sdc_repeated_lane_change` now run only on the
+  scenario current frame, while still looking back across their configured
+  motion window.
+- Both operators first compute a cheap SDC lateral displacement range from raw
+  trajectory points. If the SDC never moves laterally enough to satisfy the
+  existing threshold, expensive lane matching is skipped.
+
+First-five-shard profile after this pass:
+
+- Review output stayed unchanged at `8` review scenarios.
+- Engine time improved from `53.97s` to `27.57s`.
+- `lane_change_conflict` improved to `0.28s`.
+- `sdc_repeated_lane_change` improved to `0.14s`.
+
+After this pass, the dominant engine-side costs moved away from lane review
+rules and back to red-light map checks, `low_ttc_pair`, and hard-braking pair
+generation.

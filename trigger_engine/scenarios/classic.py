@@ -500,6 +500,7 @@ rules:
             max_ttc_s: 4.0
             min_closing_speed_mps: 0.5
             min_target_speed_mps: 1.0
+            only_current_frame: true
     emit:
       tag: lane_change_conflict
       intent: review
@@ -530,6 +531,7 @@ rules:
             min_speed_mps: 2.0
             min_stable_frames: 2
             min_lateral_displacement_m: 2.5
+            only_current_frame: true
     emit:
       tag: sdc_repeated_lane_change
       intent: review

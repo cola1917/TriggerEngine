@@ -284,6 +284,25 @@ rules:
             1,
         )
 
+    def test_classic_expensive_lane_review_rules_only_run_on_current_frame(self):
+        from trigger_engine.rules.parser import RuleParser
+        from trigger_engine.scenarios.classic import CLASSIC_SCENARIO_RULES_YAML
+
+        rule_set = RuleParser().parse_yaml(CLASSIC_SCENARIO_RULES_YAML)
+        by_id = {rule.rule_id: rule for rule in rule_set.rules}
+
+        for rule_id, operator_name in (
+            ("lane_change_conflict", "predicate.sdc_lane_change_conflict"),
+            ("sdc_repeated_lane_change", "predicate.sdc_repeated_lane_change"),
+        ):
+            rule = by_id[rule_id]
+            call = next(
+                call
+                for call in rule.condition.calls
+                if call.operator_name == operator_name
+            )
+            self.assertTrue(call.args["only_current_frame"])
+
 
 if __name__ == "__main__":
     unittest.main()

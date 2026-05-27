@@ -45,8 +45,12 @@
   predicate ordering before lane/path matching.
 - [x] Optimize `lane_change_conflict` with moving-target candidate gating and
   cheap relative-position checks before lane matching.
-- [ ] Use profiling output to decide whether lane matching, temporal rules, or
-  specific high-value operators need the next optimization pass.
+- [x] Run expensive lane-review rules only on current frames and add a raw SDC
+  lateral-displacement gate before lane matching.
+- [x] Verify first-five-shard review output is unchanged after lane-review
+  narrowing.
+- [ ] Use profiling output to decide whether red-light map checks, `low_ttc_pair`,
+  or hard-braking pair generation need the next optimization pass.
 
 ## Verification
 

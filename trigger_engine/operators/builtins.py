@@ -38,6 +38,39 @@ def _agent_in_frame(aligned_frame, track_id: int):
     )
 
 
+def _lateral_displacement_range_over_window(
+    context,
+    track_id: int,
+    current_time: float,
+    window_seconds: float,
+) -> float:
+    if context is None:
+        return 0.0
+
+    start_time = current_time - window_seconds
+    first_agent = None
+    lateral_values = []
+    for aligned_frame in context.input_frames:
+        ts = aligned_frame.frame.timestamp_seconds
+        if ts < start_time or ts > current_time:
+            continue
+        agent = _agent_in_frame(aligned_frame, track_id)
+        if agent is None:
+            continue
+        if first_agent is None:
+            first_agent = agent
+            lateral_values.append(0.0)
+            continue
+        dx = agent.center.x - first_agent.center.x
+        dy = agent.center.y - first_agent.center.y
+        _, lateral = _rotate(dx, dy, first_agent.heading)
+        lateral_values.append(lateral)
+
+    if not lateral_values:
+        return 0.0
+    return max(lateral_values) - min(lateral_values)
+
+
 def _agent_speed_change_over_window(context, frame, track_id: int, window_seconds: float):
     if context is None:
         return None
@@ -1550,6 +1583,21 @@ class SdcRepeatedLaneChangeOperator:
             )
 
         current_time = frame.frame.timestamp_seconds
+        raw_lateral_range = _lateral_displacement_range_over_window(
+            context, subject.track_id, current_time, window_seconds
+        )
+        if raw_lateral_range < min_lateral_displacement:
+            return OperatorResult(
+                self.name, "agent", subject.track_id,
+                frame.frame.step_index, frame.frame.timestamp_seconds,
+                False,
+                {
+                    "lateral_displacement_m": raw_lateral_range,
+                    "min_lateral_displacement_m": min_lateral_displacement,
+                    "lane_match_skipped": True,
+                },
+            )
+
         matched = []
         for af in context.input_frames:
             ts = af.frame.timestamp_seconds
@@ -1722,6 +1770,23 @@ class SdcLaneChangeConflictOperator:
         max_heading = args.get("max_heading_delta_rad", 0.7)
         min_lateral_displacement = args.get("min_lateral_displacement_m", 1.5)
         current_time = frame.frame.timestamp_seconds
+
+        raw_lateral_range = _lateral_displacement_range_over_window(
+            context, subject.ego.track_id, current_time, window_seconds
+        )
+        if raw_lateral_range < min_lateral_displacement:
+            return OperatorResult(
+                self.name, "agent_pair", subject.subject_id,
+                frame.frame.step_index, frame.frame.timestamp_seconds,
+                False,
+                {
+                    "lateral_displacement_m": raw_lateral_range,
+                    "min_lateral_displacement_m": min_lateral_displacement,
+                    "lane_match_skipped": True,
+                    "longitudinal_m": lon,
+                    "lateral_m": lat,
+                },
+            )
 
         ego_matches = []
         first_agent = None
