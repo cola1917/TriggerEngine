@@ -150,6 +150,39 @@ class V2TriggerRulesContractTests(unittest.TestCase):
         conflict = next(event for event in reviews if event.tag_name == "lane_change_conflict")
         self.assertEqual(conflict.subject_id, "1:2")
 
+    def test_lane_change_conflict_requires_moving_target(self):
+        frames = (
+            aligned_frame(
+                0,
+                (
+                    agent(1, 0, x=0.0, y=0.0, vx=8.0),
+                    agent(2, 0, x=15.0, y=3.5, vx=0.0),
+                ),
+                map_available=True,
+            ),
+            aligned_frame(
+                5,
+                (
+                    agent(1, 5, x=4.0, y=1.8, vx=8.0),
+                    agent(2, 5, x=15.0, y=3.5, vx=0.0),
+                ),
+                map_available=True,
+            ),
+            aligned_frame(
+                10,
+                (
+                    agent(1, 10, x=8.0, y=3.5, vx=8.0),
+                    agent(2, 10, x=15.0, y=3.5, vx=0.0),
+                ),
+                map_available=True,
+            ),
+        )
+        ctx = context(frames, map_features={1: straight_lane(1, 0.0), 2: straight_lane(2, 3.5)})
+        result = engine_result(ctx)
+        reviews = [event for event in result.events if event.metadata.get("intent") == "review"]
+
+        self.assertNotIn("lane_change_conflict", {event.tag_name for event in reviews})
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1406,6 +1406,20 @@ class SdcLaneChangeConflictOperator:
 
         ego_forward_speed, _ = _rotate(subject.ego.velocity_x, subject.ego.velocity_y, subject.ego.heading)
         other_forward_speed, _ = _rotate(subject.other.velocity_x, subject.other.velocity_y, subject.ego.heading)
+        other_speed = _speed(subject.other)
+        min_target_speed = args.get("min_target_speed_mps", 0.0)
+        if other_speed < min_target_speed:
+            return OperatorResult(
+                self.name, "agent_pair", subject.subject_id,
+                frame.frame.step_index, frame.frame.timestamp_seconds,
+                False,
+                {
+                    "other_speed_mps": other_speed,
+                    "min_target_speed_mps": min_target_speed,
+                    "longitudinal_m": lon,
+                    "lateral_m": lat,
+                },
+            )
         max_ttc = args.get("max_ttc_s", 4.0)
         min_closing = args.get("min_closing_speed_mps", 0.5)
         ttc = float("inf")
@@ -1439,6 +1453,7 @@ class SdcLaneChangeConflictOperator:
                 "lateral_m": lat,
                 "ego_forward_speed_mps": ego_forward_speed,
                 "other_forward_speed_mps": other_forward_speed,
+                "other_speed_mps": other_speed,
                 "ttc_s": ttc,
                 "conflict_mode": conflict_mode,
             },

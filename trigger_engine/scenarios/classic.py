@@ -430,6 +430,7 @@ rules:
             max_lateral_m: 3.0
             max_ttc_s: 4.0
             min_closing_speed_mps: 0.5
+            min_target_speed_mps: 1.0
     emit:
       tag: lane_change_conflict
       intent: review
