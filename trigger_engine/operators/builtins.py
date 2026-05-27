@@ -714,6 +714,220 @@ class VruCloseInteractionOperator:
         )
 
 
+def _agent_low_speed_frames_over_window(context, frame, track_id: int, window_seconds: float, max_speed_mps: float):
+    if context is None:
+        return None
+    start_time = frame.frame.timestamp_seconds - window_seconds
+    frames = []
+    for aligned_frame in context.input_frames:
+        ts = aligned_frame.frame.timestamp_seconds
+        if ts < start_time or ts > frame.frame.timestamp_seconds:
+            continue
+        agent = _agent_in_frame(aligned_frame, track_id)
+        if agent is None:
+            continue
+        speed = _speed(agent)
+        frames.append((aligned_frame, agent, speed, speed <= max_speed_mps))
+    if not frames:
+        return None
+    low_speed_count = sum(1 for _, _, _, is_low in frames if is_low)
+    return {
+        "observed_frame_count": len(frames),
+        "low_speed_frame_count": low_speed_count,
+        "window_seconds": frames[-1][0].frame.timestamp_seconds - frames[0][0].frame.timestamp_seconds,
+        "max_observed_speed_mps": max(speed for _, _, speed, _ in frames),
+        "matched_frame_indices": [aligned_frame.frame.step_index for aligned_frame, _, _, _ in frames],
+    }
+
+
+class SdcBlockedUnableToProceedOperator:
+    name = "predicate.sdc_blocked_unable_to_proceed"
+    result_kind = "predicate"
+    subject_type = "agent_pair"
+
+    def evaluate(self, context, frame, subject, args):
+        if not subject.ego.valid or not subject.other.valid:
+            return OperatorResult(
+                self.name, "agent_pair", subject.subject_id,
+                frame.frame.step_index, frame.frame.timestamp_seconds,
+                False, {},
+            )
+        blocker_types = set(args.get("blocker_types", ("vehicle", "pedestrian", "cyclist", "unknown")))
+        if subject.ego.object_type != "vehicle" or subject.other.object_type not in blocker_types:
+            return OperatorResult(
+                self.name, "agent_pair", subject.subject_id,
+                frame.frame.step_index, frame.frame.timestamp_seconds,
+                False,
+                {"ego_type": subject.ego.object_type, "blocker_type": subject.other.object_type},
+            )
+
+        dx = subject.other.center.x - subject.ego.center.x
+        dy = subject.other.center.y - subject.ego.center.y
+        lon, lat = _rotate(dx, dy, subject.ego.heading)
+        distance = math.sqrt(dx * dx + dy * dy)
+        min_front = args.get("min_front_longitudinal_m", 1.0)
+        max_front = args.get("max_front_longitudinal_m", 12.0)
+        max_lateral = args.get("max_lateral_m", 2.5)
+        if lon < min_front or lon > max_front or abs(lat) > max_lateral:
+            return OperatorResult(
+                self.name, "agent_pair", subject.subject_id,
+                frame.frame.step_index, frame.frame.timestamp_seconds,
+                False, {"longitudinal_m": lon, "lateral_m": lat, "distance_m": distance},
+            )
+
+        ego_speed = _speed(subject.ego)
+        blocker_speed = _speed(subject.other)
+        max_ego_speed = args.get("max_ego_speed_mps", 0.4)
+        max_blocker_speed = args.get("max_blocker_speed_mps", 0.8)
+        if ego_speed > max_ego_speed or blocker_speed > max_blocker_speed:
+            return OperatorResult(
+                self.name, "agent_pair", subject.subject_id,
+                frame.frame.step_index, frame.frame.timestamp_seconds,
+                False,
+                {
+                    "ego_speed_mps": ego_speed,
+                    "blocker_speed_mps": blocker_speed,
+                    "longitudinal_m": lon,
+                    "lateral_m": lat,
+                },
+            )
+
+        stop_window = _agent_low_speed_frames_over_window(
+            context,
+            frame,
+            subject.ego.track_id,
+            args.get("window_seconds", 1.0),
+            max_ego_speed,
+        )
+        if stop_window is None:
+            return OperatorResult(
+                self.name, "agent_pair", subject.subject_id,
+                frame.frame.step_index, frame.frame.timestamp_seconds,
+                False,
+                {"ego_speed_mps": ego_speed, "blocker_speed_mps": blocker_speed},
+            )
+        min_stopped_frames = args.get("min_stopped_frames", 6)
+        if stop_window["low_speed_frame_count"] < min_stopped_frames:
+            return OperatorResult(
+                self.name, "agent_pair", subject.subject_id,
+                frame.frame.step_index, frame.frame.timestamp_seconds,
+                False,
+                {
+                    **stop_window,
+                    "ego_speed_mps": ego_speed,
+                    "blocker_speed_mps": blocker_speed,
+                    "longitudinal_m": lon,
+                    "lateral_m": lat,
+                },
+            )
+
+        red_stop = _red_light_stop_ahead(
+            frame,
+            subject,
+            args.get("traffic_control_max_stop_longitudinal_m", max_front + 5.0),
+            args.get("traffic_control_max_stop_lateral_m", max_lateral),
+        )
+        if red_stop is not None:
+            metadata = {
+                **stop_window,
+                **red_stop,
+                "ego_speed_mps": ego_speed,
+                "blocker_speed_mps": blocker_speed,
+                "longitudinal_m": lon,
+                "lateral_m": lat,
+                "distance_m": distance,
+                "blocker_type": subject.other.object_type,
+                "traffic_control_context": True,
+                "blocked_category": "traffic_control_stop",
+                "review_subtype": "traffic_control_stop",
+                "risk_level": "medium",
+                "risk_reasons": ("traffic_control_stop",),
+            }
+            return OperatorResult(
+                self.name, "agent_pair", subject.subject_id,
+                frame.frame.step_index, frame.frame.timestamp_seconds,
+                False,
+                metadata,
+            )
+
+        queue_like_count = 0
+        if subject.other.object_type == "vehicle":
+            queue_max_front = args.get("queue_max_front_longitudinal_m", max_front + 10.0)
+            queue_max_lateral = args.get("queue_max_lateral_m", max_lateral)
+            for other in frame.frame.agent_states:
+                if not other.valid or other.track_id in (subject.ego.track_id, subject.other.track_id):
+                    continue
+                if other.object_type != "vehicle" or _speed(other) > max_blocker_speed:
+                    continue
+                odx = other.center.x - subject.ego.center.x
+                ody = other.center.y - subject.ego.center.y
+                other_lon, other_lat = _rotate(odx, ody, subject.ego.heading)
+                if min_front <= other_lon <= queue_max_front and abs(other_lat) <= queue_max_lateral:
+                    queue_like_count += 1
+        min_queue_vehicles = args.get("min_queue_vehicle_count", 2)
+        queue_vehicle_count = queue_like_count + 1
+        if queue_vehicle_count >= min_queue_vehicles:
+            metadata = {
+                **stop_window,
+                "ego_speed_mps": ego_speed,
+                "blocker_speed_mps": blocker_speed,
+                "longitudinal_m": lon,
+                "lateral_m": lat,
+                "distance_m": distance,
+                "blocker_type": subject.other.object_type,
+                "queue_vehicle_count": queue_vehicle_count,
+                "traffic_control_context": False,
+                "blocked_category": "queue_like_stop",
+                "review_subtype": "queue_like_stop",
+                "risk_level": "medium",
+                "risk_reasons": ("queue_like_stop",),
+            }
+            return OperatorResult(
+                self.name, "agent_pair", subject.subject_id,
+                frame.frame.step_index, frame.frame.timestamp_seconds,
+                False,
+                metadata,
+            )
+
+        subtype_by_type = {
+            "vehicle": "blocked_by_vehicle",
+            "pedestrian": "blocked_by_vru",
+            "cyclist": "blocked_by_vru",
+        }
+        review_subtype = subtype_by_type.get(subject.other.object_type, "blocked_by_unknown")
+        metadata = {
+            **stop_window,
+            "ego_speed_mps": ego_speed,
+            "blocker_speed_mps": blocker_speed,
+            "longitudinal_m": lon,
+            "lateral_m": lat,
+            "distance_m": distance,
+            "blocker_type": subject.other.object_type,
+            "blocker_track_id": subject.other.track_id,
+            "queue_vehicle_count": queue_like_count + (1 if subject.other.object_type == "vehicle" else 0),
+            "traffic_control_context": False,
+            "blocked_category": "blocked",
+            "review_subtype": review_subtype,
+            "risk_level": "high",
+            "risk_reasons": ("front_blocker", "sustained_ego_stop"),
+            "event_metadata": {
+                "risk_level": "high",
+                "risk_reasons": ("front_blocker", "sustained_ego_stop"),
+                "traffic_control_context": False,
+                "blocked_category": "blocked",
+                "review_subtype": review_subtype,
+                "blocker_type": subject.other.object_type,
+                "blocker_track_id": subject.other.track_id,
+            },
+        }
+        return OperatorResult(
+            self.name, "agent_pair", subject.subject_id,
+            frame.frame.step_index, frame.frame.timestamp_seconds,
+            True,
+            metadata,
+        )
+
+
 class SamePathOverlapOperator:
     name = "predicate.same_path_overlap"
     result_kind = "predicate"
@@ -1701,6 +1915,7 @@ def register_builtin_operators(registry: OperatorRegistry) -> None:
         PairOtherSpeedAboveOperator(),
         PairEgoHardBrakingOperator(),
         VruCloseInteractionOperator(),
+        SdcBlockedUnableToProceedOperator(),
         RedLightBeforeStopLineOperator(),
         RedLightAfterStopLineOperator(),
         RedLightCrossingTransitionOperator(),

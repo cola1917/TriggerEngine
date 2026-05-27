@@ -388,6 +388,39 @@ rules:
           by: subject
           mode: interval
 
+  # --- SDC Blocked / Unable to Proceed ---
+  - id: sdc_blocked_unable_to_proceed
+    kind: single_frame
+    subject: sdc_pair
+    when:
+      all:
+        - operator: predicate.sdc_blocked_unable_to_proceed
+          args:
+            blocker_types: [vehicle, pedestrian, cyclist, unknown]
+            window_seconds: 1.0
+            min_stopped_frames: 6
+            max_ego_speed_mps: 0.4
+            max_blocker_speed_mps: 0.8
+            min_front_longitudinal_m: 1.0
+            max_front_longitudinal_m: 12.0
+            max_lateral_m: 2.5
+            traffic_control_max_stop_longitudinal_m: 17.0
+            traffic_control_max_stop_lateral_m: 2.5
+            min_queue_vehicle_count: 2
+            queue_max_front_longitudinal_m: 22.0
+            queue_max_lateral_m: 2.8
+    emit:
+      tag: sdc_blocked_unable_to_proceed
+      intent: review
+      metadata:
+        review_family: planner_blocked
+        review_priority: 18
+      policy:
+        cooldown_frames: 20
+        episode:
+          by: subject
+          mode: interval
+
   # --- VRU Close Interaction ---
   - id: vru_close_interaction
     kind: single_frame

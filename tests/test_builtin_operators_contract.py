@@ -77,6 +77,7 @@ class BuiltinOperatorsContractTests(unittest.TestCase):
                 "predicate.pair_other_speed_above",
                 "predicate.pair_ego_hard_braking",
                 "predicate.vru_close_interaction",
+                "predicate.sdc_blocked_unable_to_proceed",
                 "predicate.red_light_before_stop_line",
                 "predicate.red_light_after_stop_line",
                 "predicate.red_light_crossing_transition",

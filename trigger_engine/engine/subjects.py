@@ -27,6 +27,10 @@ class PairCandidatePredicate:
             return math.sqrt(max_lat * max_lat + max_long * max_long)
         if self.operator_name == "predicate.vru_close_interaction":
             return float(self.args.get("max_distance_m", 15.0))
+        if self.operator_name == "predicate.sdc_blocked_unable_to_proceed":
+            max_lat = float(self.args.get("max_lateral_m", 2.5))
+            max_long = float(self.args.get("max_front_longitudinal_m", 12.0))
+            return math.sqrt(max_lat * max_lat + max_long * max_long)
         if self.operator_name == "predicate.sdc_lane_change_conflict":
             max_lat = float(self.args.get("max_lateral_m", 3.0))
             max_long = max(
@@ -80,6 +84,13 @@ class PairCandidatePredicate:
                 <= lon
                 <= float(self.args.get("max_longitudinal_m", 20.0))
                 and lat_abs <= float(self.args.get("max_lateral_m", 8.0))
+            )
+        if self.operator_name == "predicate.sdc_blocked_unable_to_proceed":
+            return (
+                float(self.args.get("min_front_longitudinal_m", 1.0))
+                <= lon
+                <= float(self.args.get("max_front_longitudinal_m", 12.0))
+                and lat_abs <= float(self.args.get("max_lateral_m", 2.5))
             )
         if self.operator_name == "predicate.sdc_lane_change_conflict":
             return (
@@ -171,6 +182,10 @@ class PairGeometryCache:
                 mask &= lon >= float(args.get("min_longitudinal_m", -5.0))
                 mask &= lon <= float(args.get("max_longitudinal_m", 20.0))
                 mask &= lat_abs <= float(args.get("max_lateral_m", 8.0))
+            elif predicate.operator_name == "predicate.sdc_blocked_unable_to_proceed":
+                mask &= lon >= float(args.get("min_front_longitudinal_m", 1.0))
+                mask &= lon <= float(args.get("max_front_longitudinal_m", 12.0))
+                mask &= lat_abs <= float(args.get("max_lateral_m", 2.5))
             elif predicate.operator_name == "predicate.sdc_lane_change_conflict":
                 mask &= lon >= -float(args.get("max_behind_longitudinal_m", 20.0))
                 mask &= lon <= float(args.get("max_front_longitudinal_m", 25.0))
@@ -467,6 +482,7 @@ def _candidate_predicate_for(
         "predicate.low_ttc",
         "predicate.pair_ego_hard_braking",
         "predicate.vru_close_interaction",
+        "predicate.sdc_blocked_unable_to_proceed",
         "predicate.sdc_lane_change_conflict",
     }:
         return PairCandidatePredicate(operator_name, dict(args))

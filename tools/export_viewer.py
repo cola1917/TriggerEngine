@@ -84,6 +84,7 @@ _PRIMARY_TAGS = frozenset({
     "persistent_low_ttc_pair",
     "red_light_running",
     "sdc_hard_braking",
+    "sdc_blocked_unable_to_proceed",
     "vru_close_interaction",
     "lane_change_conflict",
 })
@@ -181,6 +182,14 @@ _EXPLANATION_KEYS = frozenset({
     "red_light_stop_longitudinal_m",
     "red_light_stop_lateral_m",
     "braking_category",
+    "blocked_category",
+    "blocker_type",
+    "blocker_speed_mps",
+    "blocker_track_id",
+    "queue_vehicle_count",
+    "low_speed_frame_count",
+    "observed_frame_count",
+    "max_observed_speed_mps",
     "review_subtype",
 })
 

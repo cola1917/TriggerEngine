@@ -135,6 +135,66 @@ class V2TriggerRulesContractTests(unittest.TestCase):
         self.assertEqual(hard_brake.metadata["risk_reasons"], ("traffic_control_stop",))
         self.assertEqual(hard_brake.metadata["red_light_lane_id"], 7)
 
+    def test_classic_pack_emits_blocked_unable_to_proceed_for_front_blocker(self):
+        frames = tuple(
+            aligned_frame(
+                step,
+                (
+                    agent(1, step, x=0.0, vx=0.1),
+                    agent(2, step, x=6.0, vx=0.0),
+                ),
+            )
+            for step in (0, 2, 4, 6, 8, 10)
+        )
+        result = engine_result(context(frames))
+        reviews = [event for event in result.events if event.metadata.get("intent") == "review"]
+
+        self.assertIn("sdc_blocked_unable_to_proceed", {event.tag_name for event in reviews})
+        blocked = next(event for event in reviews if event.tag_name == "sdc_blocked_unable_to_proceed")
+        self.assertEqual(blocked.subject_id, "1:2")
+        self.assertEqual(blocked.metadata["risk_level"], "high")
+        self.assertEqual(blocked.metadata["review_subtype"], "blocked_by_vehicle")
+        self.assertEqual(blocked.metadata["risk_reasons"], ("front_blocker", "sustained_ego_stop"))
+
+    def test_blocked_unable_to_proceed_excludes_red_light_stop(self):
+        red_light = TrafficLightState(
+            lane_id=7,
+            state="stop",
+            stop_point=Point3D(5.0, 0.0, 0.0),
+        )
+        frames = tuple(
+            aligned_frame(
+                step,
+                (
+                    agent(1, step, x=0.0, vx=0.1),
+                    agent(2, step, x=6.0, vx=0.0),
+                ),
+                traffic_lights=(red_light,),
+            )
+            for step in (0, 2, 4, 6, 8, 10)
+        )
+        result = engine_result(context(frames))
+        reviews = [event for event in result.events if event.metadata.get("intent") == "review"]
+
+        self.assertNotIn("sdc_blocked_unable_to_proceed", {event.tag_name for event in reviews})
+
+    def test_blocked_unable_to_proceed_excludes_queue_like_stop(self):
+        frames = tuple(
+            aligned_frame(
+                step,
+                (
+                    agent(1, step, x=0.0, vx=0.1),
+                    agent(2, step, x=6.0, vx=0.0),
+                    agent(3, step, x=14.0, vx=0.0),
+                ),
+            )
+            for step in (0, 2, 4, 6, 8, 10)
+        )
+        result = engine_result(context(frames))
+        reviews = [event for event in result.events if event.metadata.get("intent") == "review"]
+
+        self.assertNotIn("sdc_blocked_unable_to_proceed", {event.tag_name for event in reviews})
+
     def test_classic_pack_emits_vru_close_interaction_for_pedestrian_target(self):
         current = aligned_frame(
             10,
