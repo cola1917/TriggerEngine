@@ -547,18 +547,56 @@ class VruCloseInteractionOperator:
         dvy = subject.ego.velocity_y - subject.other.velocity_y
         closing_speed, lateral_closing_speed = _rotate(dvx, dvy, subject.ego.heading)
 
+        type_args = dict((args.get("type_thresholds") or {}).get(subject.other.object_type, {}))
         min_lon = args.get("min_longitudinal_m", -5.0)
-        max_lon = args.get("max_longitudinal_m", 20.0)
-        max_lat = args.get("max_lateral_m", 8.0)
-        max_distance = args.get("max_distance_m", 15.0)
+        max_lon = type_args.get("max_longitudinal_m", args.get("max_longitudinal_m", 20.0))
+        max_lat = type_args.get("max_lateral_m", args.get("max_lateral_m", 8.0))
+        max_distance = type_args.get("max_distance_m", args.get("max_distance_m", 15.0))
+        min_closing = type_args.get(
+            "min_closing_speed_mps",
+            args.get("min_closing_speed_mps", -float("inf")),
+        )
+        close_lateral = type_args.get("close_lateral_m", args.get("close_lateral_m", max_lat))
+        wide_lateral_min_closing = type_args.get(
+            "wide_lateral_min_closing_speed_mps",
+            args.get("wide_lateral_min_closing_speed_mps", min_closing),
+        )
         min_ego_speed = args.get("min_ego_speed_mps", 0.0)
-        min_closing = args.get("min_closing_speed_mps", -float("inf"))
+        behind_close_distance = args.get("behind_close_distance_m", 0.0)
+        behind_min_lon = args.get("behind_min_longitudinal_m", min_lon)
+
+        ttc = float("inf")
+        if lon > 0.0 and closing_speed > 0.0:
+            ttc = lon / closing_speed
+
+        motion = _agent_speed_change_over_window(
+            context, frame, subject.ego.track_id, args.get("ego_response_window_seconds", 1.0)
+        )
+        ego_response = False
+        if motion is not None:
+            ego_response = (
+                motion["acceleration_mps2"] <= args.get("ego_response_max_acceleration_mps2", -2.0)
+                or -motion["speed_delta_mps"] >= args.get("ego_response_min_speed_drop_mps", 1.0)
+            )
+
+        longitudinal_ok = min_lon <= lon <= max_lon
+        if lon < min_lon:
+            longitudinal_ok = behind_min_lon <= lon < min_lon and distance <= behind_close_distance
+        lateral_ok = abs(lat) <= close_lateral or (
+            abs(lat) <= max_lat and closing_speed >= wide_lateral_min_closing
+        )
+        high_risk = (
+            distance <= args.get("immediate_distance_m", 6.0)
+            or ttc <= args.get("max_ttc_s", 4.0)
+            or ego_response
+        )
         value = (
-            min_lon <= lon <= max_lon
-            and abs(lat) <= max_lat
+            longitudinal_ok
+            and lateral_ok
             and distance <= max_distance
             and ego_speed >= min_ego_speed
             and closing_speed >= min_closing
+            and high_risk
         )
         return OperatorResult(
             self.name, "agent_pair", subject.subject_id,
@@ -572,6 +610,17 @@ class VruCloseInteractionOperator:
                 "vru_speed_mps": other_speed,
                 "closing_speed_mps": closing_speed,
                 "lateral_closing_speed_mps": lateral_closing_speed,
+                "ttc_s": ttc,
+                "longitudinal_ok": longitudinal_ok,
+                "lateral_ok": lateral_ok,
+                "high_risk": high_risk,
+                "ego_response": ego_response,
+                "ego_acceleration_mps2": motion["acceleration_mps2"] if motion is not None else None,
+                "ego_speed_delta_mps": motion["speed_delta_mps"] if motion is not None else None,
+                "max_distance_m": max_distance,
+                "max_lateral_m": max_lat,
+                "close_lateral_m": close_lateral,
+                "min_closing_speed_mps": min_closing,
                 "vru_type": subject.other.object_type,
             },
         )

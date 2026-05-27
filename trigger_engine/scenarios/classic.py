@@ -394,12 +394,34 @@ rules:
         - operator: predicate.vru_close_interaction
           args:
             vru_types: [pedestrian, cyclist]
-            min_longitudinal_m: -1.0
+            min_longitudinal_m: 0.0
+            behind_min_longitudinal_m: -2.0
+            behind_close_distance_m: 5.0
             max_longitudinal_m: 16.0
             max_lateral_m: 5.0
             max_distance_m: 12.0
             min_ego_speed_mps: 0.5
             min_closing_speed_mps: 0.2
+            close_lateral_m: 3.5
+            wide_lateral_min_closing_speed_mps: 1.5
+            immediate_distance_m: 6.0
+            max_ttc_s: 4.0
+            ego_response_window_seconds: 1.0
+            ego_response_max_acceleration_mps2: -2.0
+            ego_response_min_speed_drop_mps: 1.0
+            type_thresholds:
+              pedestrian:
+                max_distance_m: 10.0
+                max_lateral_m: 4.0
+                close_lateral_m: 3.0
+                min_closing_speed_mps: 0.8
+                wide_lateral_min_closing_speed_mps: 1.5
+              cyclist:
+                max_distance_m: 12.0
+                max_lateral_m: 5.0
+                close_lateral_m: 3.5
+                min_closing_speed_mps: 0.5
+                wide_lateral_min_closing_speed_mps: 1.2
     emit:
       tag: vru_close_interaction
       intent: review

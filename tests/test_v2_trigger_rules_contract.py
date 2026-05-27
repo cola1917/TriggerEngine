@@ -115,6 +115,45 @@ class V2TriggerRulesContractTests(unittest.TestCase):
         vru = next(event for event in reviews if event.tag_name == "vru_close_interaction")
         self.assertEqual(vru.subject_id, "1:20")
 
+    def test_vru_close_interaction_rejects_wide_slow_pedestrian(self):
+        current = aligned_frame(
+            10,
+            (
+                agent(1, 10, x=0.0, y=0.0, vx=3.0, object_type="vehicle"),
+                agent(20, 10, x=8.0, y=3.8, vx=2.7, object_type="pedestrian"),
+            ),
+        )
+        result = engine_result(context((current,)))
+        reviews = [event for event in result.events if event.metadata.get("intent") == "review"]
+
+        self.assertNotIn("vru_close_interaction", {event.tag_name for event in reviews})
+
+    def test_vru_close_interaction_keeps_wider_cyclist_with_strong_closing(self):
+        current = aligned_frame(
+            10,
+            (
+                agent(1, 10, x=0.0, y=0.0, vx=7.0, object_type="vehicle"),
+                agent(20, 10, x=10.0, y=4.5, vx=4.0, object_type="cyclist"),
+            ),
+        )
+        result = engine_result(context((current,)))
+        reviews = [event for event in result.events if event.metadata.get("intent") == "review"]
+
+        self.assertIn("vru_close_interaction", {event.tag_name for event in reviews})
+
+    def test_vru_close_interaction_rejects_far_behind_target(self):
+        current = aligned_frame(
+            10,
+            (
+                agent(1, 10, x=0.0, y=0.0, vx=5.0, object_type="vehicle"),
+                agent(20, 10, x=-4.0, y=1.0, vx=0.0, object_type="pedestrian"),
+            ),
+        )
+        result = engine_result(context((current,)))
+        reviews = [event for event in result.events if event.metadata.get("intent") == "review"]
+
+        self.assertNotIn("vru_close_interaction", {event.tag_name for event in reviews})
+
     def test_classic_pack_emits_lane_change_conflict(self):
         frames = (
             aligned_frame(
