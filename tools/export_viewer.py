@@ -850,7 +850,7 @@ def render_viewer_html(payload: dict[str, object]) -> str:
         ctx.shadowBlur = 10;
       }}
       if (agent.object_type === 'pedestrian') {{
-        const radius = Math.max(3.5 * scale, 5);
+        const radius = Math.max(agent.width * scale * 0.65, 3.5);
         ctx.beginPath();
         ctx.arc(0, 0, radius, 0, Math.PI * 2);
         ctx.fill();
@@ -864,8 +864,8 @@ def render_viewer_html(payload: dict[str, object]) -> str:
         ctx.fillStyle = '#ffffff';
         ctx.fill();
       }} else if (agent.object_type === 'cyclist') {{
-        const l = Math.max(agent.length * scale, 10);
-        const w = Math.max(agent.width * scale, 6);
+        const l = Math.max(agent.length * scale * 1.2, 8);
+        const w = Math.max(agent.width * scale * 0.9, 4.5);
         ctx.beginPath();
         ctx.moveTo(l / 2, 0);
         ctx.lineTo(0, -w / 2);
