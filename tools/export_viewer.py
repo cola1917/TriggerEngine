@@ -110,10 +110,14 @@ _INTENT_TO_GROUP = {
 
 def classify_event_group(event) -> str:
     metadata = event.metadata if hasattr(event, "metadata") else event.get("metadata", {})
+    tag = event.tag_name if hasattr(event, "tag_name") else event.get("tag_name", "")
+    if tag == "vru_close_interaction" and isinstance(metadata, dict):
+        risk_level = metadata.get("risk_level")
+        if risk_level is not None and risk_level != "high":
+            return "supporting"
     intent = metadata.get("intent") if isinstance(metadata, dict) else None
     if intent in _INTENT_TO_GROUP:
         return _INTENT_TO_GROUP[intent]
-    tag = event.tag_name if hasattr(event, "tag_name") else event.get("tag_name", "")
     if tag in _PRIMARY_TAGS:
         return "primary"
     if tag in _SUPPORTING_TAGS:

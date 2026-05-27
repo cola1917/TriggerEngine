@@ -585,18 +585,26 @@ class VruCloseInteractionOperator:
         lateral_ok = abs(lat) <= close_lateral or (
             abs(lat) <= max_lat and closing_speed >= wide_lateral_min_closing
         )
-        high_risk = (
+        candidate_risk = (
             distance <= args.get("immediate_distance_m", 6.0)
             or ttc <= args.get("max_ttc_s", 4.0)
             or ego_response
         )
+        risk_reasons = []
+        if distance <= args.get("high_immediate_distance_m", 5.0):
+            risk_reasons.append("immediate_distance")
+        if ttc <= args.get("high_max_ttc_s", 3.0):
+            risk_reasons.append("low_ttc")
+        if ego_response and distance <= args.get("high_ego_response_max_distance_m", 10.0):
+            risk_reasons.append("ego_response")
+        risk_level = "high" if risk_reasons else "medium"
         value = (
             longitudinal_ok
             and lateral_ok
             and distance <= max_distance
             and ego_speed >= min_ego_speed
             and closing_speed >= min_closing
-            and high_risk
+            and candidate_risk
         )
         return OperatorResult(
             self.name, "agent_pair", subject.subject_id,
@@ -613,7 +621,9 @@ class VruCloseInteractionOperator:
                 "ttc_s": ttc,
                 "longitudinal_ok": longitudinal_ok,
                 "lateral_ok": lateral_ok,
-                "high_risk": high_risk,
+                "candidate_risk": candidate_risk,
+                "risk_level": risk_level if value else None,
+                "risk_reasons": tuple(risk_reasons),
                 "ego_response": ego_response,
                 "ego_acceleration_mps2": motion["acceleration_mps2"] if motion is not None else None,
                 "ego_speed_delta_mps": motion["speed_delta_mps"] if motion is not None else None,
@@ -622,6 +632,10 @@ class VruCloseInteractionOperator:
                 "close_lateral_m": close_lateral,
                 "min_closing_speed_mps": min_closing,
                 "vru_type": subject.other.object_type,
+                "event_metadata": {
+                    "risk_level": risk_level,
+                    "risk_reasons": tuple(risk_reasons),
+                } if value else {},
             },
         )
 

@@ -103,6 +103,42 @@ class ExportViewerContractTests(unittest.TestCase):
         self.assertEqual(payload["events"][0]["metadata"]["supporting_frame_indices"], (0, 1, 2))
         self.assertEqual(payload["stats"]["events_emitted"], 1)
 
+    def test_medium_vru_event_is_kept_but_not_default_review(self):
+        from tools.export_viewer import build_viewer_payload
+
+        event = TagEvent(
+            scenario_id="scenario-viewer",
+            source="unit",
+            frame_index=2,
+            timestamp_seconds=0.2,
+            tag_name="vru_close_interaction",
+            subject_type="sdc_pair",
+            subject_id="1:2",
+            value=True,
+            rule_id="vru_close_interaction",
+            metadata={"intent": "review", "risk_level": "medium"},
+        )
+        result = EngineResult(
+            scenario_id="scenario-viewer",
+            source="unit",
+            plan_id="classic_v1",
+            events=(event,),
+            stats=EngineStats(
+                input_frames=3,
+                future_frames=0,
+                single_frame_rules=1,
+                temporal_rules=0,
+                events_emitted=1,
+            ),
+            diagnostics=(),
+        )
+
+        payload = build_viewer_payload(make_context(), result)
+
+        self.assertEqual(payload["events"][0]["metadata"]["risk_level"], "medium")
+        self.assertEqual(payload["review_event_indices"], [])
+        self.assertEqual(payload["event_groups"]["supporting"], [0])
+
     def test_render_viewer_html_embeds_parseable_payload(self):
         from tools.export_viewer import build_viewer_payload, render_viewer_html
 

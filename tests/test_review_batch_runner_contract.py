@@ -2,6 +2,18 @@ import unittest
 
 
 class ReviewBatchRunnerContractTests(unittest.TestCase):
+    def test_medium_vru_is_kept_for_payload_but_not_default_review(self):
+        from tools.export_viewer import classify_event_group
+        from tools.run_review_batch import should_keep_payload_event
+
+        event = {
+            "tag_name": "vru_close_interaction",
+            "metadata": {"intent": "review", "risk_level": "medium"},
+        }
+
+        self.assertEqual(classify_event_group(event), "supporting")
+        self.assertTrue(should_keep_payload_event(event))
+
     def test_merge_shard_summaries_is_deterministic_and_counts_reviews(self):
         from tools.run_review_batch import merge_shard_summaries
 

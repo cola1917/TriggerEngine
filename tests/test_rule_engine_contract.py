@@ -90,6 +90,28 @@ class SpeedBelowOperator:
         )
 
 
+class RiskMetadataOperator:
+    name = "predicate.risk_metadata"
+    result_kind = "predicate"
+    subject_type = "agent"
+
+    def evaluate(self, context, frame, subject, args):
+        from trigger_engine.operators.base import OperatorResult
+
+        return OperatorResult(
+            operator_name=self.name,
+            subject_type="agent",
+            subject_id=subject.track_id,
+            frame_index=frame.frame.step_index,
+            timestamp_seconds=frame.frame.timestamp_seconds,
+            value=True,
+            metadata={
+                "distance_m": 3.0,
+                "event_metadata": {"risk_level": "high"},
+            },
+        )
+
+
 class FutureLeakDetectorOperator:
     name = "predicate.no_future_seen"
     result_kind = "predicate"
@@ -118,6 +140,7 @@ class RuleEngineContractTests(unittest.TestCase):
         registry = OperatorRegistry()
         registry.register(TypeIsOperator())
         registry.register(SpeedBelowOperator())
+        registry.register(RiskMetadataOperator())
         registry.register(FutureLeakDetectorOperator())
         return registry
 
@@ -154,6 +177,32 @@ rules:
         self.assertEqual(events[0].rule_id, "vehicle_stopped")
         self.assertTrue(events[0].value)
         self.assertIn("operator_results", events[0].metadata)
+
+    def test_rule_engine_carries_operator_event_metadata(self):
+        from trigger_engine.rules.engine import RuleEngine
+        from trigger_engine.rules.parser import RuleParser
+
+        rule_set = RuleParser().parse_yaml(
+            """
+rules:
+  - id: risky_agent
+    subject: agent
+    when:
+      all:
+        - operator: predicate.risk_metadata
+    emit:
+      tag: risky_agent
+      intent: review
+"""
+        )
+
+        events = RuleEngine(self.build_registry()).evaluate(rule_set, make_context())
+
+        self.assertEqual(events[0].metadata["risk_level"], "high")
+        self.assertEqual(
+            events[0].metadata["operator_metadata"]["predicate.risk_metadata"]["distance_m"],
+            3.0,
+        )
 
     def test_rule_engine_uses_only_alignment_input_frames(self):
         from trigger_engine.rules.engine import RuleEngine

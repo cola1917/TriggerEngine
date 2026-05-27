@@ -68,6 +68,8 @@ class RuleEngine:
                     ):
                         continue
                     operator_results = {}
+                    operator_metadata = {}
+                    event_metadata = {}
                     all_true = True
 
                     for call in rule.condition.calls:
@@ -90,6 +92,11 @@ class RuleEngine:
                                 f"got {type(result.value).__name__}"
                             )
                         operator_results[call.operator_name] = result.value
+                        if result.metadata:
+                            operator_metadata[call.operator_name] = result.metadata
+                            emitted = result.metadata.get("event_metadata")
+                            if isinstance(emitted, dict):
+                                event_metadata.update(emitted)
                         if not result.value:
                             all_true = False
                             break
@@ -101,6 +108,9 @@ class RuleEngine:
                             "rule_kind": "single_frame",
                             "operator_results": operator_results,
                         })
+                        if operator_metadata:
+                            metadata["operator_metadata"] = operator_metadata
+                        metadata.update(event_metadata)
                         if rule.subject_type == "agent_pair":
                             if pair_mode == "unordered":
                                 metadata["pair_mode"] = "unordered"

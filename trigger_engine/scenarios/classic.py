@@ -406,6 +406,9 @@ rules:
             wide_lateral_min_closing_speed_mps: 1.5
             immediate_distance_m: 6.0
             max_ttc_s: 4.0
+            high_immediate_distance_m: 5.0
+            high_max_ttc_s: 3.0
+            high_ego_response_max_distance_m: 10.0
             ego_response_window_seconds: 1.0
             ego_response_max_acceleration_mps2: -2.0
             ego_response_min_speed_drop_mps: 1.0

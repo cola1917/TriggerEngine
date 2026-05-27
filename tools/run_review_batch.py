@@ -31,11 +31,25 @@ def _build_engine():
     return TriggerEngine(operators, rules)
 
 
+def should_keep_payload_event(event) -> bool:
+    from tools.export_viewer import classify_event_group
+
+    if classify_event_group(event) == "primary":
+        return True
+    metadata = event.metadata if hasattr(event, "metadata") else event.get("metadata", {})
+    tag = event.tag_name if hasattr(event, "tag_name") else event.get("tag_name", "")
+    return (
+        tag == "vru_close_interaction"
+        and isinstance(metadata, dict)
+        and metadata.get("risk_level") == "medium"
+    )
+
+
 def evaluate_shard(path_text: str, payload_options: dict | None = None) -> dict:
     from trigger_engine.alignment.scenario_alignment import ScenarioAlignment
     from trigger_engine.data.adapters import WaymoScenarioAdapter
     from trigger_engine.data.readers import TFRecordScenarioReader
-    from tools.export_viewer import build_viewer_payload
+    from tools.export_viewer import build_viewer_payload, classify_event_group
 
     path = Path(path_text)
     reader = TFRecordScenarioReader()
@@ -67,9 +81,13 @@ def evaluate_shard(path_text: str, payload_options: dict | None = None) -> dict:
 
         review_events = [
             event for event in result.events
-            if event.metadata.get("intent") == "review"
+            if classify_event_group(event) == "primary"
         ]
-        if not review_events:
+        payload_events = [
+            event for event in result.events
+            if should_keep_payload_event(event)
+        ]
+        if not review_events and not payload_events:
             continue
 
         tags = [event.tag_name for event in review_events]
@@ -97,6 +115,8 @@ def evaluate_shard(path_text: str, payload_options: dict | None = None) -> dict:
             output.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
             ref["payload_path"] = str(output)
             payload_outputs.append(str(output))
+        if not review_events:
+            continue
         review_refs.append(ref)
 
     elapsed = time.perf_counter() - started

@@ -22,6 +22,7 @@ from trigger_engine.engine.trigger_engine import TriggerEngine
 from trigger_engine.operators.builtins import register_builtin_operators
 from trigger_engine.operators.registry import OperatorRegistry
 from trigger_engine.scenarios.classic import register_classic_scenario_pack
+from tools.export_viewer import classify_event_group
 
 
 def build_engine() -> TriggerEngine:
@@ -77,7 +78,7 @@ def main(argv=None) -> int:
 
             review_events = [
                 event for event in result.events
-                if event.metadata.get("intent") == "review"
+                if classify_event_group(event) == "primary"
             ]
             if review_events:
                 shard_reviews += 1
