@@ -37,6 +37,39 @@ def make_sparse_context(agent_count=60):
     )
 
 
+def make_sparse_sdc_context(agent_count=60):
+    ctx = make_sparse_context(agent_count=agent_count)
+    return AlignmentContext(
+        scenario_id=ctx.scenario_id,
+        watermark=ctx.watermark,
+        observed_frames=ctx.observed_frames,
+        current_frame=ctx.current_frame,
+        future_frames=ctx.future_frames,
+        input_frames=ctx.input_frames,
+        source=ctx.source,
+        map_features=ctx.map_features,
+        sdc_track_index=0,
+        sdc_track_id=0,
+    )
+
+
+SPATIAL_SDC_PAIR_RULE_YAML = """
+rules:
+  - id: nearby_sdc_pair
+    kind: single_frame
+    subject: sdc_pair
+    when:
+      all:
+        - operator: predicate.count_pair
+        - operator: predicate.close_lateral_gap
+          args:
+            max_lateral_m: 2.0
+            max_longitudinal_m: 5.0
+    emit:
+      tag: nearby_sdc_pair
+"""
+
+
 class PerformanceV3ContractTests(unittest.TestCase):
     def test_spatial_broad_phase_limits_exact_pair_scan_for_bounded_pair_rules(self):
         from trigger_engine.engine.subjects import SubjectCache
@@ -90,6 +123,28 @@ class PerformanceV3ContractTests(unittest.TestCase):
         )
         self.assertLess(len(cached_counter.calls), len(uncached_counter.calls))
         self.assertEqual(len(uncached_counter.calls), 60 * 59)
+
+    def test_sdc_pair_candidate_generation_scans_only_sdc_to_targets(self):
+        from trigger_engine.engine.subjects import SubjectCache
+        from trigger_engine.operators.builtins import register_builtin_operators
+        from trigger_engine.operators.registry import OperatorRegistry
+        from trigger_engine.rules.engine import RuleEngine
+        from trigger_engine.rules.parser import RuleParser
+
+        counter = CountingPairOperator()
+        registry = OperatorRegistry()
+        register_builtin_operators(registry)
+        registry.register(counter)
+        rule_set = RuleParser().parse_yaml(SPATIAL_SDC_PAIR_RULE_YAML)
+        context = make_sparse_sdc_context(agent_count=60)
+        cache = SubjectCache()
+
+        events = RuleEngine(registry).evaluate(rule_set, context, subject_cache=cache)
+
+        self.assertEqual([event.subject_id for event in events], ["0:1"])
+        self.assertEqual(counter.calls, ["0:1"])
+        self.assertEqual(cache.rule_candidate_count("nearby_sdc_pair", "sdc_pair", 0), 1)
+        self.assertLessEqual(cache.rule_pair_scan_count("nearby_sdc_pair", "sdc_pair", 0), 59)
 
 
 if __name__ == "__main__":

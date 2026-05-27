@@ -211,6 +211,40 @@ rules:
         self.assertEqual(events[0].metadata["target_id"], 200)
         self.assertEqual(events[0].metadata["target_role"], "interactive_agent")
 
+    def test_only_current_frame_rule_skips_history_before_subject_generation(self):
+        from trigger_engine.engine.subjects import SubjectCache
+        from trigger_engine.operators.registry import OperatorRegistry
+        from trigger_engine.rules.engine import RuleEngine
+        from trigger_engine.rules.parser import RuleParser
+
+        registry = OperatorRegistry()
+        registry.register(AlwaysSdcPairTrueOperator())
+        rule_set = RuleParser().parse_yaml(
+            """
+rules:
+  - id: current_sdc_pair_rule
+    subject: sdc_pair
+    when:
+      all:
+        - operator: predicate.sdc_pair_true
+          args:
+            only_current_frame: true
+    emit:
+      tag: current_sdc_pair_rule
+      intent: review
+"""
+        )
+        cache = SubjectCache()
+
+        events = RuleEngine(registry).evaluate(
+            rule_set,
+            aligned_context(),
+            subject_cache=cache,
+        )
+
+        self.assertEqual([event.frame_index for event in events], [1, 1])
+        self.assertEqual([event.subject_id for event in events], ["100:200", "100:300"])
+
     def test_rule_engine_rejects_sdc_subjects_without_sdc_identity(self):
         from dataclasses import replace
         from trigger_engine.operators.registry import OperatorRegistry

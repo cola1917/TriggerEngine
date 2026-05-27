@@ -232,19 +232,33 @@ class SubjectCache:
         self,
         rule: Rule,
         aligned_frame,
+        context=None,
         allowed_subject_ids: set[str | int | None] | None = None,
     ) -> list:
         if allowed_subject_ids is not None:
             return self._build_filtered_subjects(rule, aligned_frame, allowed_subject_ids)
 
         if rule.subject_type not in ("agent_pair", "sdc_pair"):
+            if rule.subject_type == "sdc_agent" and context is not None:
+                return [
+                    subject
+                    for subject in self.subjects_for(rule.subject_type, aligned_frame)
+                    if subject.track_id == context.sdc_track_id
+                ]
             return self.subjects_for(rule.subject_type, aligned_frame)
 
         pair_mode = rule.pair.mode
 
         plan = build_pair_candidate_plan(rule)
         if not plan.can_prune:
-            subjects = self.subjects_for(rule.subject_type, aligned_frame)
+            if rule.subject_type == "sdc_pair" and context is not None:
+                subjects = self._build_subjects(
+                    rule.subject_type,
+                    aligned_frame,
+                    context=context,
+                )
+            else:
+                subjects = self.subjects_for(rule.subject_type, aligned_frame)
             if pair_mode == "unordered":
                 subjects = _canonicalize_unordered_pairs(subjects)
             return subjects
@@ -253,7 +267,12 @@ class SubjectCache:
         if key in self._rule_cache:
             return self._rule_cache[key]
 
-        subjects = self._build_agent_pair_candidates(aligned_frame, plan)
+        subjects = self._build_agent_pair_candidates(
+            aligned_frame,
+            plan,
+            subject_type=rule.subject_type,
+            sdc_track_id=getattr(context, "sdc_track_id", None),
+        )
         if pair_mode == "unordered":
             subjects = _canonicalize_unordered_pairs(subjects)
         scan_count = self._last_pair_scan_count
@@ -318,7 +337,7 @@ class SubjectCache:
         return None
 
     @staticmethod
-    def _build_subjects(subject_type: str, aligned_frame) -> list:
+    def _build_subjects(subject_type: str, aligned_frame, context=None) -> list:
         if subject_type == "agent":
             return list(aligned_frame.frame.agent_states)
         elif subject_type == "frame":
@@ -334,6 +353,15 @@ class SubjectCache:
             from trigger_engine.operators.builtins import AgentPairSubject
 
             agents = [a for a in aligned_frame.frame.agent_states if a.valid]
+            if subject_type == "sdc_pair" and context is not None:
+                ego = next((a for a in agents if a.track_id == context.sdc_track_id), None)
+                if ego is None:
+                    return []
+                return [
+                    AgentPairSubject(ego=ego, other=other)
+                    for other in agents
+                    if other.track_id != ego.track_id
+                ]
             pairs = []
             for i, ego in enumerate(agents):
                 for j, other in enumerate(agents):
@@ -347,10 +375,42 @@ class SubjectCache:
     _last_pair_scan_count = 0
     _last_geometry_mode = "scalar"
 
-    def _build_agent_pair_candidates(self, aligned_frame, plan: PairCandidatePlan) -> list:
+    def _build_agent_pair_candidates(
+        self,
+        aligned_frame,
+        plan: PairCandidatePlan,
+        *,
+        subject_type: str = "agent_pair",
+        sdc_track_id: int | None = None,
+    ) -> list:
         from trigger_engine.operators.builtins import AgentPairSubject
 
         agents = [a for a in aligned_frame.frame.agent_states if a.valid]
+        if subject_type == "sdc_pair" and sdc_track_id is not None:
+            ego = next((agent for agent in agents if agent.track_id == sdc_track_id), None)
+            if ego is None:
+                self._last_pair_scan_count = 0
+                self._last_geometry_mode = "sdc_scalar"
+                return []
+            radius = plan.search_radius_m
+            radius_sq = radius * radius if radius is not None else None
+            pairs = []
+            pair_scan_count = 0
+            for other in agents:
+                if other.track_id == ego.track_id:
+                    continue
+                if radius_sq is not None:
+                    dx = other.center.x - ego.center.x
+                    dy = other.center.y - ego.center.y
+                    if dx * dx + dy * dy > radius_sq:
+                        continue
+                pair_scan_count += 1
+                if plan.matches(ego, other):
+                    pairs.append(AgentPairSubject(ego=ego, other=other))
+            self._last_pair_scan_count = pair_scan_count
+            self._last_geometry_mode = "sdc_scalar"
+            return pairs
+
         if PairGeometryCache.should_vectorize(len(agents), plan):
             geometry = PairGeometryCache(agents)
             index_pairs = geometry.candidate_index_pairs(plan)

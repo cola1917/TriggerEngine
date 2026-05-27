@@ -35,10 +35,13 @@ class RuleEngine:
             )
             pair_mode = rule.pair.mode
             for aligned_frame in context.input_frames:
+                if not _rule_applies_to_frame(rule, aligned_frame):
+                    continue
                 if subject_cache is not None:
                     subjects = subject_cache.subjects_for_rule(
                         rule,
                         aligned_frame,
+                        context=context,
                         allowed_subject_ids=allowed_subject_ids,
                     )
                 else:
@@ -207,3 +210,12 @@ class RuleEngine:
         elif subject_type == "sdc_pair":
             return subject.subject_id
         return None
+
+
+def _rule_applies_to_frame(rule, aligned_frame) -> bool:
+    if not getattr(rule.condition, "calls", None):
+        return True
+    for call in rule.condition.calls:
+        if call.args.get("only_current_frame", False):
+            return aligned_frame.visibility == "current" and aligned_frame.frame.phase == "current"
+    return True
