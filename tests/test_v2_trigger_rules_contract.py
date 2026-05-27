@@ -1,7 +1,7 @@
 import unittest
 
 from trigger_engine.alignment.context import AlignedFrame, AlignmentContext, Watermark
-from trigger_engine.data.frames import AgentState, Frame, MapFeature, Point3D
+from trigger_engine.data.frames import AgentState, Frame, MapFeature, Point3D, TrafficLightState
 
 
 def agent(track_id, step, x=0.0, y=0.0, vx=0.0, vy=0.0, heading=0.0, object_type="vehicle"):
@@ -21,7 +21,7 @@ def agent(track_id, step, x=0.0, y=0.0, vx=0.0, vy=0.0, heading=0.0, object_type
     )
 
 
-def aligned_frame(step, agents, map_available=False):
+def aligned_frame(step, agents, map_available=False, traffic_lights=()):
     modalities = {"agents", "valid_agents"}
     if map_available:
         modalities.add("map")
@@ -32,7 +32,7 @@ def aligned_frame(step, agents, map_available=False):
             timestamp_seconds=step * 0.1,
             phase="current" if step == 10 else "history",
             agent_states=tuple(agents),
-            traffic_lights=(),
+            traffic_lights=tuple(traffic_lights),
         ),
         visibility="current" if step == 10 else "observed",
         available_modalities=frozenset(modalities),
@@ -99,6 +99,37 @@ class V2TriggerRulesContractTests(unittest.TestCase):
         hard_brake = next(event for event in reviews if event.tag_name == "sdc_hard_braking")
         self.assertEqual(hard_brake.subject_type, "sdc_pair")
         self.assertEqual(hard_brake.subject_id, "1:2")
+        self.assertEqual(hard_brake.metadata["risk_level"], "high")
+
+    def test_red_light_hard_braking_is_medium_candidate(self):
+        red_light = TrafficLightState(
+            lane_id=7,
+            state="stop",
+            stop_point=Point3D(13.0, 0.0, 0.0),
+        )
+        past = aligned_frame(
+            0,
+            (
+                agent(1, 0, x=0.0, vx=12.0),
+                agent(2, 0, x=30.0, vx=0.0),
+            ),
+            traffic_lights=(red_light,),
+        )
+        current = aligned_frame(
+            10,
+            (
+                agent(1, 10, x=8.0, vx=7.0),
+                agent(2, 10, x=31.0, vx=0.0),
+            ),
+            traffic_lights=(red_light,),
+        )
+        result = engine_result(context((past, current)))
+        hard_brake = next(event for event in result.events if event.tag_name == "sdc_hard_braking")
+
+        self.assertEqual(hard_brake.metadata["risk_level"], "medium")
+        self.assertTrue(hard_brake.metadata["traffic_control_context"])
+        self.assertEqual(hard_brake.metadata["risk_reasons"], ("traffic_control_stop",))
+        self.assertEqual(hard_brake.metadata["red_light_lane_id"], 7)
 
     def test_classic_pack_emits_vru_close_interaction_for_pedestrian_target(self):
         current = aligned_frame(

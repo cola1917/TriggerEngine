@@ -115,6 +115,10 @@ def classify_event_group(event) -> str:
         risk_level = metadata.get("risk_level")
         if risk_level is not None and risk_level != "high":
             return "supporting"
+    if tag == "sdc_hard_braking" and isinstance(metadata, dict):
+        risk_level = metadata.get("risk_level")
+        if risk_level is not None and risk_level != "high":
+            return "supporting"
     intent = metadata.get("intent") if isinstance(metadata, dict) else None
     if intent in _INTENT_TO_GROUP:
         return _INTENT_TO_GROUP[intent]
@@ -176,6 +180,10 @@ _EXPLANATION_KEYS = frozenset({
     "other_type",
     "vru_type",
     "conflict_mode",
+    "traffic_control_context",
+    "red_light_lane_id",
+    "red_light_stop_longitudinal_m",
+    "red_light_stop_lateral_m",
 })
 
 

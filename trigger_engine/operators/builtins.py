@@ -76,6 +76,27 @@ def _agent_speed_change_over_window(context, frame, track_id: int, window_second
     }
 
 
+def _red_light_stop_ahead(frame, subject, max_longitudinal_m: float, max_lateral_m: float):
+    stop_states = {"stop", "arrow_stop"}
+    best = None
+    for tl in frame.frame.traffic_lights:
+        if tl.state not in stop_states or tl.stop_point is None:
+            continue
+        dx = tl.stop_point.x - subject.ego.center.x
+        dy = tl.stop_point.y - subject.ego.center.y
+        lon, lat = _rotate(dx, dy, subject.ego.heading)
+        if lon < 0.0 or lon > max_longitudinal_m or abs(lat) > max_lateral_m:
+            continue
+        if best is None or lon < best["red_light_stop_longitudinal_m"]:
+            best = {
+                "red_light_lane_id": tl.lane_id,
+                "red_light_state": tl.state,
+                "red_light_stop_longitudinal_m": lon,
+                "red_light_stop_lateral_m": lat,
+            }
+    return best
+
+
 class TypeIsOperator:
     name = "predicate.type_is"
     result_kind = "predicate"
@@ -502,13 +523,39 @@ class PairEgoHardBrakingOperator:
             and speed_drop >= min_speed_drop
             and motion["start_speed_mps"] >= min_start_speed
         )
+        red_stop = _red_light_stop_ahead(
+            frame,
+            subject,
+            args.get("traffic_control_max_stop_longitudinal_m", max_front),
+            args.get("traffic_control_max_stop_lateral_m", max_lat),
+        )
+        traffic_control_context = False
+        if red_stop is not None:
+            margin = args.get("traffic_control_target_margin_m", 5.0)
+            traffic_control_context = red_stop["red_light_stop_longitudinal_m"] <= lon + margin
+        risk_level = "medium" if traffic_control_context else "high"
+        risk_reasons = ("traffic_control_stop",) if traffic_control_context else ()
         metadata = {
             **motion,
             "speed_drop_mps": speed_drop,
             "longitudinal_m": lon,
             "lateral_m": lat,
             "other_type": subject.other.object_type,
+            "traffic_control_context": traffic_control_context,
+            "risk_level": risk_level if value else None,
+            "risk_reasons": risk_reasons,
         }
+        if red_stop is not None:
+            metadata.update(red_stop)
+        if value:
+            event_metadata = {
+                "risk_level": risk_level,
+                "risk_reasons": risk_reasons,
+                "traffic_control_context": traffic_control_context,
+            }
+            if red_stop is not None:
+                event_metadata.update(red_stop)
+            metadata["event_metadata"] = event_metadata
         return OperatorResult(
             self.name, "agent_pair", subject.subject_id,
             frame.frame.step_index, frame.frame.timestamp_seconds,

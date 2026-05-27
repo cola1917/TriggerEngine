@@ -373,6 +373,9 @@ rules:
             min_start_speed_mps: 3.0
             max_front_longitudinal_m: 35.0
             max_lateral_m: 4.0
+            traffic_control_max_stop_longitudinal_m: 40.0
+            traffic_control_max_stop_lateral_m: 4.0
+            traffic_control_target_margin_m: 5.0
     emit:
       tag: sdc_hard_braking
       intent: review

@@ -39,7 +39,7 @@ def should_keep_payload_event(event) -> bool:
     metadata = event.metadata if hasattr(event, "metadata") else event.get("metadata", {})
     tag = event.tag_name if hasattr(event, "tag_name") else event.get("tag_name", "")
     return (
-        tag == "vru_close_interaction"
+        tag in {"vru_close_interaction", "sdc_hard_braking"}
         and isinstance(metadata, dict)
         and metadata.get("risk_level") == "medium"
     )

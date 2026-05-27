@@ -31,13 +31,19 @@ class ReviewBatchRunnerContractTests(unittest.TestCase):
         from tools.export_viewer import classify_event_group
         from tools.run_review_batch import should_keep_payload_event
 
-        event = {
+        vru_event = {
             "tag_name": "vru_close_interaction",
             "metadata": {"intent": "review", "risk_level": "medium"},
         }
+        hard_brake_event = {
+            "tag_name": "sdc_hard_braking",
+            "metadata": {"intent": "review", "risk_level": "medium"},
+        }
 
-        self.assertEqual(classify_event_group(event), "supporting")
-        self.assertTrue(should_keep_payload_event(event))
+        self.assertEqual(classify_event_group(vru_event), "supporting")
+        self.assertTrue(should_keep_payload_event(vru_event))
+        self.assertEqual(classify_event_group(hard_brake_event), "supporting")
+        self.assertTrue(should_keep_payload_event(hard_brake_event))
 
     def test_merge_shard_summaries_is_deterministic_and_counts_reviews(self):
         from tools.run_review_batch import merge_shard_summaries

@@ -147,6 +147,46 @@ class ExportViewerContractTests(unittest.TestCase):
         self.assertEqual(payload["review_summary"]["candidate_event_count"], 1)
         self.assertEqual(payload["review_summary"]["event_counts_by_risk"], {"medium": 1})
 
+    def test_medium_hard_braking_event_is_kept_but_not_default_review(self):
+        from tools.export_viewer import build_viewer_payload
+
+        event = TagEvent(
+            scenario_id="scenario-viewer",
+            source="unit",
+            frame_index=2,
+            timestamp_seconds=0.2,
+            tag_name="sdc_hard_braking",
+            subject_type="sdc_pair",
+            subject_id="1:2",
+            value=True,
+            rule_id="sdc_hard_braking",
+            metadata={
+                "intent": "review",
+                "risk_level": "medium",
+                "traffic_control_context": True,
+            },
+        )
+        result = EngineResult(
+            scenario_id="scenario-viewer",
+            source="unit",
+            plan_id="classic_v1",
+            events=(event,),
+            stats=EngineStats(
+                input_frames=3,
+                future_frames=0,
+                single_frame_rules=1,
+                temporal_rules=0,
+                events_emitted=1,
+            ),
+            diagnostics=(),
+        )
+
+        payload = build_viewer_payload(make_context(), result)
+
+        self.assertEqual(payload["review_event_indices"], [])
+        self.assertEqual(payload["event_groups"]["supporting"], [0])
+        self.assertEqual(payload["review_summary"]["event_counts_by_risk"], {"medium": 1})
+
     def test_event_explanation_extracts_operator_metrics(self):
         from tools.export_viewer import event_explanation
 
