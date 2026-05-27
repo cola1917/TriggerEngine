@@ -397,9 +397,11 @@ rules:
         - operator: predicate.sdc_blocked_unable_to_proceed
           args:
             blocker_types: [vehicle, pedestrian, cyclist, unknown]
+            only_current_frame: true
             window_seconds: 1.0
             min_stopped_frames: 6
             max_ego_speed_mps: 0.4
+            min_recent_ego_motion_mps: 0.2
             max_blocker_speed_mps: 0.8
             min_front_longitudinal_m: 1.0
             max_front_longitudinal_m: 12.0

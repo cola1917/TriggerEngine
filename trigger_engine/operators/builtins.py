@@ -746,6 +746,15 @@ class SdcBlockedUnableToProceedOperator:
     subject_type = "agent_pair"
 
     def evaluate(self, context, frame, subject, args):
+        if args.get("only_current_frame", False) and (
+            frame.visibility != "current" or frame.frame.phase != "current"
+        ):
+            return OperatorResult(
+                self.name, "agent_pair", subject.subject_id,
+                frame.frame.step_index, frame.frame.timestamp_seconds,
+                False,
+                {"visibility": frame.visibility, "phase": frame.frame.phase},
+            )
         if not subject.ego.valid or not subject.other.valid:
             return OperatorResult(
                 self.name, "agent_pair", subject.subject_id,
@@ -805,6 +814,24 @@ class SdcBlockedUnableToProceedOperator:
                 frame.frame.step_index, frame.frame.timestamp_seconds,
                 False,
                 {"ego_speed_mps": ego_speed, "blocker_speed_mps": blocker_speed},
+            )
+        min_recent_motion = args.get("min_recent_ego_motion_mps", 0.0)
+        if stop_window["max_observed_speed_mps"] < min_recent_motion:
+            return OperatorResult(
+                self.name, "agent_pair", subject.subject_id,
+                frame.frame.step_index, frame.frame.timestamp_seconds,
+                False,
+                {
+                    **stop_window,
+                    "ego_speed_mps": ego_speed,
+                    "blocker_speed_mps": blocker_speed,
+                    "longitudinal_m": lon,
+                    "lateral_m": lat,
+                    "distance_m": distance,
+                    "blocker_type": subject.other.object_type,
+                    "blocked_category": "static_follow_stop",
+                    "min_recent_ego_motion_mps": min_recent_motion,
+                },
             )
         min_stopped_frames = args.get("min_stopped_frames", 6)
         if stop_window["low_speed_frame_count"] < min_stopped_frames:

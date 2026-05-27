@@ -140,7 +140,7 @@ class V2TriggerRulesContractTests(unittest.TestCase):
             aligned_frame(
                 step,
                 (
-                    agent(1, step, x=0.0, vx=0.1),
+                    agent(1, step, x=0.0, vx=0.3 if step < 6 else 0.1),
                     agent(2, step, x=6.0, vx=0.0),
                 ),
             )
@@ -155,6 +155,23 @@ class V2TriggerRulesContractTests(unittest.TestCase):
         self.assertEqual(blocked.metadata["risk_level"], "high")
         self.assertEqual(blocked.metadata["review_subtype"], "blocked_by_vehicle")
         self.assertEqual(blocked.metadata["risk_reasons"], ("front_blocker", "sustained_ego_stop"))
+        self.assertEqual(blocked.frame_index, 10)
+
+    def test_blocked_unable_to_proceed_rejects_static_follow_stop(self):
+        frames = tuple(
+            aligned_frame(
+                step,
+                (
+                    agent(1, step, x=0.0, vx=0.01),
+                    agent(2, step, x=9.0, vx=0.0),
+                ),
+            )
+            for step in (0, 2, 4, 6, 8, 10)
+        )
+        result = engine_result(context(frames))
+        reviews = [event for event in result.events if event.metadata.get("intent") == "review"]
+
+        self.assertNotIn("sdc_blocked_unable_to_proceed", {event.tag_name for event in reviews})
 
     def test_blocked_unable_to_proceed_excludes_red_light_stop(self):
         red_light = TrafficLightState(
