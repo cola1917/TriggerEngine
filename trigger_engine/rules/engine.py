@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 from trigger_engine.alignment.context import AlignmentContext
 from trigger_engine.operators.registry import OperatorRegistry
 
@@ -24,10 +26,18 @@ class RuleEngine:
         context: AlignmentContext,
         subject_cache=None,
         subject_id_filters: dict[str, set[str | int | None]] | None = None,
+        profile: dict[str, dict[str, object]] | None = None,
     ) -> tuple[TagEvent, ...]:
         events: list[TagEvent] = []
 
         for rule in rule_set.rules:
+            rule_started = time.perf_counter() if profile is not None else None
+            emitted_before = len(events)
+            frames_evaluated = 0
+            frames_skipped = 0
+            subjects_considered = 0
+            pair_scan_count = 0
+            pair_candidate_count = 0
             allowed_subject_ids = (
                 subject_id_filters.get(rule.rule_id)
                 if subject_id_filters is not None
@@ -36,7 +46,9 @@ class RuleEngine:
             pair_mode = rule.pair.mode
             for aligned_frame in context.input_frames:
                 if not _rule_applies_to_frame(rule, aligned_frame):
+                    frames_skipped += 1
                     continue
+                frames_evaluated += 1
                 if subject_cache is not None:
                     subjects = subject_cache.subjects_for_rule(
                         rule,
@@ -44,8 +56,16 @@ class RuleEngine:
                         context=context,
                         allowed_subject_ids=allowed_subject_ids,
                     )
+                    if rule.subject_type in ("agent_pair", "sdc_pair"):
+                        pair_candidate_count += subject_cache.rule_candidate_count(
+                            rule.rule_id, rule.subject_type, aligned_frame.frame.step_index
+                        )
+                        pair_scan_count += subject_cache.rule_pair_scan_count(
+                            rule.rule_id, rule.subject_type, aligned_frame.frame.step_index
+                        )
                 else:
                     subjects = self._get_subjects(rule.subject_type, aligned_frame, pair_mode)
+                subjects_considered += len(subjects)
                 for subject in subjects:
                     subject_id = self._get_subject_id(rule.subject_type, subject, pair_mode)
                     # SDC filtering: only evaluate SDC agent / SDC-as-ego pairs
@@ -147,6 +167,34 @@ class RuleEngine:
                             metadata=metadata,
                         )
                         events.append(event)
+
+            if profile is not None:
+                elapsed = time.perf_counter() - rule_started
+                item = profile.setdefault(
+                    rule.rule_id,
+                    {
+                        "rule_id": rule.rule_id,
+                        "tag_name": rule.emit.tag_name,
+                        "rule_kind": "single_frame",
+                        "subject_type": rule.subject_type,
+                        "seconds": 0.0,
+                        "frames_evaluated": 0,
+                        "frames_skipped": 0,
+                        "subjects_considered": 0,
+                        "pair_scan_count": 0,
+                        "pair_candidate_count": 0,
+                        "events_emitted": 0,
+                        "calls": 0,
+                    },
+                )
+                item["seconds"] += elapsed
+                item["frames_evaluated"] += frames_evaluated
+                item["frames_skipped"] += frames_skipped
+                item["subjects_considered"] += subjects_considered
+                item["pair_scan_count"] += pair_scan_count
+                item["pair_candidate_count"] += pair_candidate_count
+                item["events_emitted"] += len(events) - emitted_before
+                item["calls"] += 1
 
         return tuple(events)
 

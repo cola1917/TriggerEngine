@@ -112,6 +112,16 @@ class TriggerEngineContractTests(unittest.TestCase):
         rules.activate("default")
         return TriggerEngine(operator_registry=operators, rule_registry=rules)
 
+    def build_profiled_engine(self):
+        from trigger_engine.engine.registry import RuleRegistry
+        from trigger_engine.engine.trigger_engine import TriggerEngine
+
+        operators = runtime_registry()
+        rules = RuleRegistry(operator_registry=operators)
+        rules.register_yaml("default", RULE_YAML)
+        rules.activate("default")
+        return TriggerEngine(operator_registry=operators, rule_registry=rules, profile_rules=True)
+
     def test_trigger_engine_evaluate_accepts_alignment_context_only(self):
         engine = self.build_engine()
 
@@ -162,6 +172,24 @@ class TriggerEngineContractTests(unittest.TestCase):
 
         with self.assertRaisesRegex(RuleRegistryError, "active"):
             engine.evaluate(make_context())
+
+    def test_trigger_engine_can_emit_rule_profile_diagnostics(self):
+        engine = self.build_profiled_engine()
+
+        result = engine.evaluate(make_context())
+
+        profiles = [
+            diagnostic.metadata
+            for diagnostic in result.diagnostics
+            if diagnostic.message == "rule_profile"
+        ]
+        self.assertEqual([profile["rule_id"] for profile in profiles], ["vehicle_stopped", "vehicle_stopped_for_3_frames"])
+        self.assertEqual(profiles[0]["rule_kind"], "single_frame")
+        self.assertEqual(profiles[0]["frames_evaluated"], 3)
+        self.assertEqual(profiles[0]["events_emitted"], 3)
+        self.assertGreaterEqual(profiles[0]["seconds"], 0.0)
+        self.assertEqual(profiles[1]["rule_kind"], "temporal")
+        self.assertEqual(profiles[1]["events_emitted"], 1)
 
 
 if __name__ == "__main__":

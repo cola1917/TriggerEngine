@@ -72,6 +72,21 @@ class ReviewBatchRunnerContractTests(unittest.TestCase):
                     },
                     "seconds": 2.0,
                     "timings": {"engine_seconds": 1.0},
+                    "rule_profile": [
+                        {
+                            "rule_id": "slow_rule",
+                            "tag_name": "slow",
+                            "rule_kind": "single_frame",
+                            "subject_type": "sdc_pair",
+                            "seconds": 0.7,
+                            "frames_evaluated": 3,
+                            "subjects_considered": 10,
+                            "pair_scan_count": 20,
+                            "pair_candidate_count": 10,
+                            "events_emitted": 1,
+                            "calls": 1,
+                        }
+                    ],
                     "review_scenario_refs": [
                         {
                             "source": "data/shard-00002",
@@ -102,6 +117,30 @@ class ReviewBatchRunnerContractTests(unittest.TestCase):
                     },
                     "seconds": 1.0,
                     "timings": {"engine_seconds": 0.5},
+                    "rule_profile": [
+                        {
+                            "rule_id": "slow_rule",
+                            "tag_name": "slow",
+                            "rule_kind": "single_frame",
+                            "subject_type": "sdc_pair",
+                            "seconds": 0.2,
+                            "frames_evaluated": 2,
+                            "subjects_considered": 5,
+                            "pair_scan_count": 8,
+                            "pair_candidate_count": 5,
+                            "events_emitted": 0,
+                            "calls": 1,
+                        },
+                        {
+                            "rule_id": "fast_rule",
+                            "tag_name": "fast",
+                            "rule_kind": "temporal",
+                            "subject_type": "sdc_pair",
+                            "seconds": 0.1,
+                            "events_emitted": 1,
+                            "calls": 1,
+                        },
+                    ],
                     "review_scenario_refs": [
                         {
                             "source": "data/shard-00001",
@@ -138,6 +177,33 @@ class ReviewBatchRunnerContractTests(unittest.TestCase):
         )
         self.assertEqual(summary["review_quality"]["top_multi_event_scenarios"][0]["scenario_id"], "b")
         self.assertEqual(summary["timings"], {"engine_seconds": 1.5})
+        self.assertEqual(
+            summary["rule_profile"][:2],
+            [
+                {
+                    "rule_id": "slow_rule",
+                    "tag_name": "slow",
+                    "rule_kind": "single_frame",
+                    "subject_type": "sdc_pair",
+                    "seconds": 0.8999999999999999,
+                    "frames_evaluated": 5,
+                    "subjects_considered": 15,
+                    "pair_scan_count": 28,
+                    "pair_candidate_count": 15,
+                    "events_emitted": 1,
+                    "calls": 2,
+                },
+                {
+                    "rule_id": "fast_rule",
+                    "tag_name": "fast",
+                    "rule_kind": "temporal",
+                    "subject_type": "sdc_pair",
+                    "seconds": 0.1,
+                    "events_emitted": 1,
+                    "calls": 1,
+                },
+            ],
+        )
         self.assertEqual(
             [ref["scenario_id"] for ref in summary["review_scenario_refs"]],
             ["a", "b"],

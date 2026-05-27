@@ -84,3 +84,42 @@ The next safe areas are:
 - Per-rule profiling: measure candidate counts, scan counts, hit counts, and
   rule-level elapsed time to identify the remaining slow rules inside the
   engine.
+
+## Summary-First Batch Workflow
+
+Large batches can now run without payload/view generation:
+
+```powershell
+E:\code\TriggerEngine\.venv\Scripts\python.exe tools\run_review_batch.py `
+  data\validation_interactive.tfrecord-00000-of-00150 `
+  --workers 5 `
+  --profile-rules `
+  --output review_batch_summary.json
+```
+
+Payloads and the HTML index can be generated later from the saved summary:
+
+```powershell
+E:\code\TriggerEngine\.venv\Scripts\python.exe tools\run_review_batch.py `
+  --from-summary review_batch_summary.json `
+  --output review_batch_with_payloads.json `
+  --payload-dir review_payloads `
+  --view-output view.html `
+  --viewer-dir review_viewers
+```
+
+The second phase uses `review_scenario_refs`, so it generates primary review
+scenarios only. This is intentional for large-scale review triage.
+
+## First Profiling Result
+
+On the first five shards with summary-only profiling enabled, review output
+remained unchanged while rule-level profiling identified the current slowest
+engine rules:
+
+- `low_ttc_pair`: `29.24s`, `558562` pair scans, `19075` candidates
+- `lane_change_conflict`: `15.83s`, `124968` pair scans, `18829` candidates
+- `sdc_repeated_lane_change`: `8.41s`, SDC-agent lane matching
+
+The next code-level optimization should start with `low_ttc_pair` candidate
+gating or cheaper lane/path filtering, then revisit lane-change map matching.

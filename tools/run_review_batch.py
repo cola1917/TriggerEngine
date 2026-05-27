@@ -17,7 +17,7 @@ if THIRD_PARTY.exists() and str(THIRD_PARTY) not in sys.path:
     sys.path.insert(0, str(THIRD_PARTY))
 
 
-def _build_engine():
+def _build_engine(*, profile_rules: bool = False):
     from trigger_engine.engine.registry import RuleRegistry
     from trigger_engine.engine.trigger_engine import TriggerEngine
     from trigger_engine.operators.builtins import register_builtin_operators
@@ -28,7 +28,7 @@ def _build_engine():
     register_builtin_operators(operators)
     rules = RuleRegistry(operator_registry=operators)
     register_classic_scenario_pack(operators, rules)
-    return TriggerEngine(operators, rules)
+    return TriggerEngine(operators, rules, profile_rules=profile_rules)
 
 
 def should_keep_payload_event(event) -> bool:
@@ -71,7 +71,51 @@ def _count_events(events: list) -> dict[str, object]:
     }
 
 
-def evaluate_shard(path_text: str, payload_options: dict | None = None) -> dict:
+def _collect_rule_profiles(result) -> list[dict[str, object]]:
+    profiles = []
+    for diagnostic in result.diagnostics:
+        if diagnostic.message == "rule_profile":
+            profiles.append(dict(diagnostic.metadata))
+    return profiles
+
+
+def _merge_rule_profiles(profiles: list[dict[str, object]]) -> list[dict[str, object]]:
+    merged = {}
+    numeric_keys = (
+        "seconds",
+        "frames_evaluated",
+        "frames_skipped",
+        "subjects_considered",
+        "pair_scan_count",
+        "pair_candidate_count",
+        "events_emitted",
+        "calls",
+    )
+    for profile in profiles:
+        rule_id = str(profile["rule_id"])
+        item = merged.setdefault(
+            rule_id,
+            {
+                "rule_id": rule_id,
+                "tag_name": profile.get("tag_name"),
+                "rule_kind": profile.get("rule_kind"),
+                "subject_type": profile.get("subject_type"),
+            },
+        )
+        for key in numeric_keys:
+            if key in profile:
+                item[key] = item.get(key, 0) + profile[key]
+    return sorted(
+        merged.values(),
+        key=lambda item: (-float(item.get("seconds", 0.0)), str(item.get("rule_id", ""))),
+    )
+
+
+def evaluate_shard(
+    path_text: str,
+    payload_options: dict | None = None,
+    profile_rules: bool = False,
+) -> dict:
     from trigger_engine.alignment.scenario_alignment import ScenarioAlignment
     from trigger_engine.data.adapters import WaymoScenarioAdapter
     from trigger_engine.data.readers import TFRecordScenarioReader
@@ -81,7 +125,7 @@ def evaluate_shard(path_text: str, payload_options: dict | None = None) -> dict:
     reader = TFRecordScenarioReader()
     adapter = WaymoScenarioAdapter()
     aligner = ScenarioAlignment()
-    engine = _build_engine()
+    engine = _build_engine(profile_rules=profile_rules)
 
     timings = Counter()
     review_counts = Counter()
@@ -94,6 +138,7 @@ def evaluate_shard(path_text: str, payload_options: dict | None = None) -> dict:
     payload_outputs = []
     payload_scenarios = 0
     multi_event_scenarios = 0
+    rule_profiles = []
     scenario_count = 0
     started = time.perf_counter()
 
@@ -111,6 +156,8 @@ def evaluate_shard(path_text: str, payload_options: dict | None = None) -> dict:
         t0 = time.perf_counter()
         result = engine.evaluate(context)
         timings["engine_seconds"] += time.perf_counter() - t0
+        if profile_rules:
+            rule_profiles.extend(_collect_rule_profiles(result))
 
         review_events = [
             event for event in result.events
@@ -193,6 +240,7 @@ def evaluate_shard(path_text: str, payload_options: dict | None = None) -> dict:
         },
         "seconds": elapsed,
         "timings": dict(sorted(timings.items())),
+        "rule_profile": _merge_rule_profiles(rule_profiles) if profile_rules else [],
         "review_scenario_refs": review_refs,
         "payload_outputs": payload_outputs,
     }
@@ -206,6 +254,7 @@ def merge_shard_summaries(shards: list[dict], elapsed: float) -> dict:
     review_subtype_counts = Counter()
     candidate_subtype_counts = Counter()
     timings = Counter()
+    rule_profiles = []
     files = {}
     review_refs = []
     total = 0
@@ -231,6 +280,7 @@ def merge_shard_summaries(shards: list[dict], elapsed: float) -> dict:
         review_subtype_counts.update(quality.get("review_subtype_counts", {}))
         candidate_subtype_counts.update(quality.get("candidate_subtype_counts", {}))
         timings.update(shard.get("timings", {}))
+        rule_profiles.extend(shard.get("rule_profile", []))
         review_refs.extend(shard.get("review_scenario_refs", []))
 
     review_refs.sort(key=lambda item: (item["source"], item["scenario_index"]))
@@ -263,6 +313,7 @@ def merge_shard_summaries(shards: list[dict], elapsed: float) -> dict:
         "seconds": elapsed,
         "scenarios_per_second": total / elapsed if elapsed else 0.0,
         "timings": dict(sorted(timings.items())),
+        "rule_profile": _merge_rule_profiles(rule_profiles),
         "files": files,
         "review_scenario_refs": review_refs,
         "payload_outputs": [
@@ -323,6 +374,7 @@ def run_batch(
     map_feature_limit: int,
     future_frames: int,
     map_crop_margin_m: float,
+    profile_rules: bool = False,
 ) -> dict:
     started = time.perf_counter()
     shard_summaries = []
@@ -337,11 +389,11 @@ def run_batch(
 
     if workers <= 1:
         for path in paths:
-            shard_summaries.append(evaluate_shard(str(path), payload_options))
+            shard_summaries.append(evaluate_shard(str(path), payload_options, profile_rules))
     else:
         with ProcessPoolExecutor(max_workers=workers) as executor:
             futures = {
-                executor.submit(evaluate_shard, str(path), payload_options): path
+                executor.submit(evaluate_shard, str(path), payload_options, profile_rules): path
                 for path in paths
             }
             for future in as_completed(futures):
@@ -360,9 +412,35 @@ def run_batch(
     return summary
 
 
+def generate_payloads_from_summary(
+    summary_path: Path,
+    *,
+    payload_dir: Path,
+    view_output: Path | None,
+    viewer_dir: Path | None,
+    map_feature_limit: int,
+    future_frames: int,
+    map_crop_margin_m: float,
+) -> dict:
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    outputs = write_review_payloads(
+        summary,
+        payload_dir,
+        map_feature_limit=map_feature_limit,
+        future_frames=future_frames,
+        map_crop_margin_m=map_crop_margin_m,
+    )
+    summary["payload_outputs"] = [str(output) for output in outputs]
+    if view_output is not None:
+        from tools.export_viewer import render_review_index_from_payload_dir
+
+        render_review_index_from_payload_dir(payload_dir, view_output, viewer_dir)
+    return summary
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Run TriggerEngine review batch over TFRecord shards.")
-    parser.add_argument("paths", nargs="+", help="Waymo TFRecord shard paths")
+    parser.add_argument("paths", nargs="*", help="Waymo TFRecord shard paths")
     parser.add_argument("--workers", type=int, default=max(1, min(4, os.cpu_count() or 1)))
     parser.add_argument("--output", default="review_batch_summary.json", help="Summary JSON output")
     parser.add_argument("--payload-dir", default=None, help="Optional directory for review payload JSON")
@@ -371,7 +449,28 @@ def main(argv=None) -> int:
     parser.add_argument("--map-feature-limit", type=int, default=300)
     parser.add_argument("--future-frames", type=int, default=30)
     parser.add_argument("--map-crop-margin-m", type=float, default=80.0)
+    parser.add_argument("--profile-rules", action="store_true", help="Include per-rule engine profiling in the summary")
+    parser.add_argument("--from-summary", default=None, help="Generate payload/view outputs from an existing summary JSON")
     args = parser.parse_args(argv)
+
+    if args.from_summary:
+        if not args.payload_dir:
+            parser.error("--from-summary requires --payload-dir")
+        summary = generate_payloads_from_summary(
+            Path(args.from_summary),
+            payload_dir=Path(args.payload_dir),
+            view_output=Path(args.view_output) if args.view_output else None,
+            viewer_dir=Path(args.viewer_dir) if args.viewer_dir else None,
+            map_feature_limit=args.map_feature_limit,
+            future_frames=args.future_frames,
+            map_crop_margin_m=args.map_crop_margin_m,
+        )
+        Path(args.output).write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(json.dumps(summary, ensure_ascii=False, indent=2))
+        return 0
+
+    if not args.paths:
+        parser.error("paths are required unless --from-summary is used")
 
     summary = run_batch(
         [Path(path) for path in args.paths],
@@ -383,6 +482,7 @@ def main(argv=None) -> int:
         map_feature_limit=args.map_feature_limit,
         future_frames=args.future_frames,
         map_crop_margin_m=args.map_crop_margin_m,
+        profile_rules=args.profile_rules,
     )
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     return 0

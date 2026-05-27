@@ -36,9 +36,11 @@
 
 ## Next: Batch Workflow and Rule Profiling
 
-- [ ] Add a summary-first batch mode for large runs.
-- [ ] Add optional per-rule profiling fields: candidate count, scan count,
+- [x] Add a summary-first batch mode for large runs.
+- [x] Add optional per-rule profiling fields: candidate count, scan count,
   emitted count, and elapsed seconds.
+- [x] Use first-five-shard profiling output to identify current slow rules:
+  `low_ttc_pair`, `lane_change_conflict`, and `sdc_repeated_lane_change`.
 - [ ] Use profiling output to decide whether lane matching, temporal rules, or
   specific high-value operators need the next optimization pass.
 

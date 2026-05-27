@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 
 from trigger_engine.alignment.context import AlignmentContext
@@ -53,14 +54,34 @@ class TemporalRuleEngine:
         context: AlignmentContext,
         timeline: TagTimeline,
         subject_cache=None,
+        profile: dict[str, dict[str, object]] | None = None,
     ) -> tuple[TagEvent, ...]:
         events: list[TagEvent] = []
 
         for rule in rules:
+            started = time.perf_counter() if profile is not None else None
+            before = len(events)
             if isinstance(rule.condition, SustainedTagCondition):
                 events.extend(self._evaluate_sustained(rule, context, timeline, subject_cache))
             elif isinstance(rule.condition, SequenceTagCondition):
                 events.extend(self._evaluate_sequence(rule, context, timeline, subject_cache))
+            if profile is not None:
+                elapsed = time.perf_counter() - started
+                item = profile.setdefault(
+                    rule.rule_id,
+                    {
+                        "rule_id": rule.rule_id,
+                        "tag_name": rule.emit.tag_name,
+                        "rule_kind": "temporal",
+                        "subject_type": rule.subject_type,
+                        "seconds": 0.0,
+                        "events_emitted": 0,
+                        "calls": 0,
+                    },
+                )
+                item["seconds"] += elapsed
+                item["events_emitted"] += len(events) - before
+                item["calls"] += 1
 
         return tuple(events)
 
@@ -315,6 +336,7 @@ class TriggerEngine:
         rule_registry: RuleRegistry,
         rule_engine: RuleEngine | None = None,
         subject_cache=None,
+        profile_rules: bool = False,
     ) -> None:
         self._operator_registry = operator_registry
         self._rule_registry = rule_registry
@@ -322,11 +344,13 @@ class TriggerEngine:
         self._temporal_engine = TemporalRuleEngine()
         self._policy_engine = EventPolicyEngine()
         self._subject_cache = subject_cache
+        self._profile_rules = profile_rules
 
     def evaluate(self, context: AlignmentContext) -> EngineResult:
         plan = self._rule_registry.active_plan()
         subject_cache = self._subject_cache or SubjectCache()
         diagnostics: list[EngineDiagnostic] = []
+        rule_profile = {} if self._profile_rules else None
 
         gated_rules = self._gated_rules(plan)
         gated_rule_ids = {item.rule.rule_id for item in gated_rules}
@@ -338,7 +362,8 @@ class TriggerEngine:
 
         # Single-frame rules
         single_events = list(self._rule_engine.evaluate(
-            RuleSet(rules=ungated_rules), context, subject_cache=subject_cache
+            RuleSet(rules=ungated_rules), context, subject_cache=subject_cache,
+            profile=rule_profile,
         ))
         timeline = TagTimeline.from_events(single_events)
 
@@ -364,6 +389,7 @@ class TriggerEngine:
                         context,
                         subject_cache=subject_cache,
                         subject_id_filters={gated.rule.rule_id: allowed_subject_ids},
+                        profile=rule_profile,
                     )
                     single_events.extend(gated_events)
                     timeline = TagTimeline.from_events(single_events)
@@ -394,6 +420,7 @@ class TriggerEngine:
                     RuleSet(rules=fallback_rules),
                     context,
                     subject_cache=subject_cache,
+                    profile=rule_profile,
                 )
                 single_events.extend(fallback_events)
                 timeline = TagTimeline.from_events(single_events)
@@ -414,6 +441,7 @@ class TriggerEngine:
         temporal_events = self._temporal_engine.evaluate(
             plan.temporal_rules, context, timeline,
             subject_cache=subject_cache,
+            profile=rule_profile,
         )
 
         # Apply event policy after temporal detection
@@ -429,6 +457,14 @@ class TriggerEngine:
             temporal_rules=len(plan.temporal_rules),
             events_emitted=len(all_events),
         )
+        if rule_profile is not None:
+            diagnostics.extend(
+                EngineDiagnostic("info", "rule_profile", profile)
+                for profile in sorted(
+                    rule_profile.values(),
+                    key=lambda item: (-float(item.get("seconds", 0.0)), str(item.get("rule_id", ""))),
+                )
+            )
 
         return EngineResult(
             scenario_id=context.scenario_id,
