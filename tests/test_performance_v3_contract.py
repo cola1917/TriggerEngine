@@ -303,6 +303,184 @@ rules:
             )
             self.assertTrue(call.args["only_current_frame"])
 
+    def test_sdc_hard_braking_pair_generation_skips_when_ego_not_braking(self):
+        from trigger_engine.engine.subjects import SubjectCache
+        from trigger_engine.operators.builtins import register_builtin_operators
+        from trigger_engine.operators.registry import OperatorRegistry
+        from trigger_engine.rules.engine import RuleEngine
+        from trigger_engine.rules.parser import RuleParser
+
+        counter = CountingPairOperator()
+        registry = OperatorRegistry()
+        register_builtin_operators(registry)
+        registry.register(counter)
+        rule_set = RuleParser().parse_yaml(
+            """
+rules:
+  - id: hard_braking_pair_candidates
+    kind: single_frame
+    subject: sdc_pair
+    when:
+      all:
+        - operator: predicate.count_pair
+        - operator: predicate.pair_ego_hard_braking
+          args:
+            window_seconds: 1.0
+            max_acceleration_mps2: -3.0
+            min_speed_drop_mps: 2.0
+            min_start_speed_mps: 3.0
+            max_front_longitudinal_m: 35.0
+            max_lateral_m: 4.0
+    emit:
+      tag: hard_braking_pair_candidates
+"""
+        )
+        past_agents = (
+            type(agent(0, 0.0, 0.0))(**{**agent(0, 0.0, 0.0).__dict__, "velocity_x": 10.0}),
+            type(agent(1, 20.0, 0.0))(**{**agent(1, 20.0, 0.0).__dict__, "velocity_x": 5.0}),
+        )
+        current_agents = (
+            type(agent(0, 8.0, 0.0))(**{**agent(0, 8.0, 0.0).__dict__, "velocity_x": 9.0, "timestamp_seconds": 1.0}),
+            type(agent(1, 24.0, 0.0))(**{**agent(1, 24.0, 0.0).__dict__, "velocity_x": 5.0, "timestamp_seconds": 1.0}),
+        )
+        past_frame = AlignedFrame(
+            frame=Frame(
+                scenario_id="scenario-hard-brake-gate",
+                step_index=0,
+                timestamp_seconds=0.0,
+                phase="history",
+                agent_states=past_agents,
+                traffic_lights=(),
+            ),
+            visibility="observed",
+            available_modalities=frozenset({"agents", "valid_agents"}),
+        )
+        current_frame = AlignedFrame(
+            frame=Frame(
+                scenario_id="scenario-hard-brake-gate",
+                step_index=10,
+                timestamp_seconds=1.0,
+                phase="current",
+                agent_states=current_agents,
+                traffic_lights=(),
+            ),
+            visibility="current",
+            available_modalities=frozenset({"agents", "valid_agents"}),
+        )
+        context = AlignmentContext(
+            scenario_id="scenario-hard-brake-gate",
+            watermark=Watermark("scenario-hard-brake-gate", 10, 1.0),
+            observed_frames=(past_frame,),
+            current_frame=current_frame,
+            future_frames=(),
+            input_frames=(past_frame, current_frame),
+            source="unit",
+            sdc_track_index=0,
+            sdc_track_id=0,
+        )
+        cache = SubjectCache()
+
+        RuleEngine(registry).evaluate(rule_set, context, subject_cache=cache)
+
+        self.assertEqual(counter.calls, [])
+        self.assertEqual(
+            cache.rule_candidate_count("hard_braking_pair_candidates", "sdc_pair", 10),
+            0,
+        )
+        self.assertEqual(
+            cache.rule_pair_scan_count("hard_braking_pair_candidates", "sdc_pair", 10),
+            0,
+        )
+        self.assertEqual(
+            cache.rule_geometry_mode("hard_braking_pair_candidates", "sdc_pair", 10),
+            "sdc_motion_gate",
+        )
+
+    def test_sdc_hard_braking_pair_generation_keeps_candidates_when_ego_brakes(self):
+        from trigger_engine.engine.subjects import SubjectCache
+        from trigger_engine.operators.builtins import register_builtin_operators
+        from trigger_engine.operators.registry import OperatorRegistry
+        from trigger_engine.rules.engine import RuleEngine
+        from trigger_engine.rules.parser import RuleParser
+
+        counter = CountingPairOperator()
+        registry = OperatorRegistry()
+        register_builtin_operators(registry)
+        registry.register(counter)
+        rule_set = RuleParser().parse_yaml(
+            """
+rules:
+  - id: hard_braking_pair_candidates
+    kind: single_frame
+    subject: sdc_pair
+    when:
+      all:
+        - operator: predicate.count_pair
+        - operator: predicate.pair_ego_hard_braking
+          args:
+            window_seconds: 1.0
+            max_acceleration_mps2: -3.0
+            min_speed_drop_mps: 2.0
+            min_start_speed_mps: 3.0
+            max_front_longitudinal_m: 35.0
+            max_lateral_m: 4.0
+    emit:
+      tag: hard_braking_pair_candidates
+"""
+        )
+        past_agents = (
+            type(agent(0, 0.0, 0.0))(**{**agent(0, 0.0, 0.0).__dict__, "velocity_x": 12.0}),
+            type(agent(1, 20.0, 0.0))(**{**agent(1, 20.0, 0.0).__dict__, "velocity_x": 5.0}),
+        )
+        current_agents = (
+            type(agent(0, 8.0, 0.0))(**{**agent(0, 8.0, 0.0).__dict__, "velocity_x": 7.0, "timestamp_seconds": 1.0}),
+            type(agent(1, 24.0, 0.0))(**{**agent(1, 24.0, 0.0).__dict__, "velocity_x": 5.0, "timestamp_seconds": 1.0}),
+        )
+        past_frame = AlignedFrame(
+            frame=Frame(
+                scenario_id="scenario-hard-brake-gate",
+                step_index=0,
+                timestamp_seconds=0.0,
+                phase="history",
+                agent_states=past_agents,
+                traffic_lights=(),
+            ),
+            visibility="observed",
+            available_modalities=frozenset({"agents", "valid_agents"}),
+        )
+        current_frame = AlignedFrame(
+            frame=Frame(
+                scenario_id="scenario-hard-brake-gate",
+                step_index=10,
+                timestamp_seconds=1.0,
+                phase="current",
+                agent_states=current_agents,
+                traffic_lights=(),
+            ),
+            visibility="current",
+            available_modalities=frozenset({"agents", "valid_agents"}),
+        )
+        context = AlignmentContext(
+            scenario_id="scenario-hard-brake-gate",
+            watermark=Watermark("scenario-hard-brake-gate", 10, 1.0),
+            observed_frames=(past_frame,),
+            current_frame=current_frame,
+            future_frames=(),
+            input_frames=(past_frame, current_frame),
+            source="unit",
+            sdc_track_index=0,
+            sdc_track_id=0,
+        )
+        cache = SubjectCache()
+
+        RuleEngine(registry).evaluate(rule_set, context, subject_cache=cache)
+
+        self.assertEqual(counter.calls, ["0:1"])
+        self.assertEqual(
+            cache.rule_candidate_count("hard_braking_pair_candidates", "sdc_pair", 10),
+            1,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

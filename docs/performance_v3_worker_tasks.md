@@ -52,8 +52,11 @@
 - [x] Cache red-light stop-line directions and lane heading change checks.
 - [x] Verify first-five-shard review output is unchanged after red-light
   geometry caching.
-- [ ] Use profiling output to decide whether red-light map checks, `low_ttc_pair`,
-  or hard-braking pair generation need the next optimization pass.
+- [x] Add an SDC hard-braking motion gate before pair candidate generation.
+- [x] Verify first-five-shard review output is unchanged after hard-braking
+  gating.
+- [ ] Use profiling output to decide whether `low_ttc_pair` or adapter/alignment
+  need the next optimization pass.
 
 ## Verification
 

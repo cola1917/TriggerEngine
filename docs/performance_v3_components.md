@@ -188,3 +188,27 @@ First-five-shard profile after this pass:
 
 The modest gain suggests the remaining red-light cost is dominated by per-frame
 rule evaluation and future heading scans, not only stop-line geometry.
+
+## SDC Hard-Braking Motion Gate
+
+The fourth follow-up optimization moved the ego hard-braking check ahead of
+pair candidate generation for `sdc_hard_braking`:
+
+- `SubjectCache` detects rules with `predicate.pair_ego_hard_braking`.
+- For `sdc_pair` rules, it computes the SDC speed drop and acceleration once
+  per frame before scanning targets.
+- If the SDC did not hard brake, the rule returns zero pair candidates for that
+  frame. If the SDC did hard brake, the existing target, spatial, red-light,
+  and review-subtype logic runs unchanged.
+
+First-five-shard profile after this pass:
+
+- Review output stayed unchanged at `8` review scenarios.
+- Engine time improved from `26.67s` to `9.01s`.
+- `sdc_hard_braking` improved from `2.66s` to `0.22s`.
+- `sdc_hard_braking` pair scans dropped from `211557` to `19`.
+- `sdc_hard_braking` candidates dropped from `26798` to `2`.
+
+After this pass, the dominant engine-side rule is `low_ttc_pair`; remaining
+large wall-clock cost is mostly adapter/alignment dominated for the first-five
+shard run.

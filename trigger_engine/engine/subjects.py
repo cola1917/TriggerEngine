@@ -273,6 +273,24 @@ class SubjectCache:
         if key in self._rule_cache:
             return self._rule_cache[key]
 
+        if (
+            rule.subject_type == "sdc_pair"
+            and context is not None
+            and _has_pair_ego_hard_braking_predicate(plan)
+            and not _sdc_hard_braking_gate_passes(
+                context,
+                aligned_frame,
+                getattr(context, "sdc_track_id", None),
+                _pair_ego_hard_braking_args(plan),
+            )
+        ):
+            self._rule_cache[key] = []
+            self._rule_build_counts[key] = self._rule_build_counts.get(key, 0) + 1
+            self._rule_candidate_counts[key] = 0
+            self._rule_pair_scan_counts[key] = 0
+            self._rule_geometry_modes[key] = "sdc_motion_gate"
+            return []
+
         subjects = self._build_agent_pair_candidates(
             aligned_frame,
             plan,
@@ -563,6 +581,77 @@ def _rotate(dx: float, dy: float, heading: float) -> tuple[float, float]:
 
 def _speed(agent) -> float:
     return math.sqrt(agent.velocity_x ** 2 + agent.velocity_y ** 2)
+
+
+def _has_pair_ego_hard_braking_predicate(plan: PairCandidatePlan) -> bool:
+    return any(
+        predicate.operator_name == "predicate.pair_ego_hard_braking"
+        for predicate in plan.predicates
+    )
+
+
+def _pair_ego_hard_braking_args(plan: PairCandidatePlan) -> dict[str, object]:
+    for predicate in plan.predicates:
+        if predicate.operator_name == "predicate.pair_ego_hard_braking":
+            return predicate.args
+    return {}
+
+
+def _sdc_hard_braking_gate_passes(
+    context,
+    aligned_frame,
+    sdc_track_id: int | None,
+    args: dict[str, object],
+) -> bool:
+    if sdc_track_id is None:
+        return True
+    current = next(
+        (
+            agent
+            for agent in aligned_frame.frame.agent_states
+            if agent.track_id == sdc_track_id and agent.valid
+        ),
+        None,
+    )
+    if current is None:
+        return False
+
+    window_seconds = float(args.get("window_seconds", 1.0))
+    start_time = aligned_frame.frame.timestamp_seconds - window_seconds
+    earliest = None
+    for frame in context.input_frames:
+        ts = frame.frame.timestamp_seconds
+        if ts < start_time or ts > aligned_frame.frame.timestamp_seconds:
+            continue
+        candidate = next(
+            (
+                agent
+                for agent in frame.frame.agent_states
+                if agent.track_id == sdc_track_id and agent.valid
+            ),
+            None,
+        )
+        if candidate is not None:
+            earliest = (frame, candidate)
+            break
+    if earliest is None:
+        return False
+
+    start_frame, start_agent = earliest
+    dt = aligned_frame.frame.timestamp_seconds - start_frame.frame.timestamp_seconds
+    if dt <= 0:
+        return False
+
+    start_speed = _speed(start_agent)
+    end_speed = _speed(current)
+    speed_delta = end_speed - start_speed
+    speed_drop = -speed_delta
+    acceleration = speed_delta / dt
+    return (
+        acceleration <= float(args["max_acceleration_mps2"])
+        and speed_drop >= float(args.get("min_speed_drop_mps", 0.0))
+        and start_speed >= float(args.get("min_start_speed_mps", 0.0))
+    )
 
 
 def _canonicalize_unordered_pairs(pairs: list) -> list:
