@@ -934,11 +934,17 @@ def render_viewer_html(payload: dict[str, object]) -> str:
 
     let renderQualityMode = 'high';
 
+    function eventViewRadius(event) {{
+      if (!event) return 45;
+      if (event.tag_name === 'vru_close_interaction') return 22;
+      return 45;
+    }}
+
     function eventFrameTransform(event) {{
       if (!event) return null;
       const frame = payload.frames[frameIndex] || payload.frames[0];
       const ego = egoAgentForEvent(event, frame);
-      if (ego) return {{cx: ego.x, cy: ego.y, heading: ego.heading, radius: 45, anchor: {{x: 0.5, y: 0.68}}}};
+      if (ego) return {{cx: ego.x, cy: ego.y, heading: ego.heading, radius: eventViewRadius(event), anchor: {{x: 0.5, y: 0.68}}}};
       const ids = subjectIds(event);
       if (ids.size === 0) return null;
       for (const agent of frame.agents) {{
@@ -1060,8 +1066,12 @@ def render_viewer_html(payload: dict[str, object]) -> str:
       }}
       const candidates = [1, 2, 5, 10, 20, 50, 100, 200, 500];
       let barMeters = candidates[candidates.length - 1];
-      for (const c of candidates) {{
-        if (c / metersPerPixel > 40 && c / metersPerPixel < 200) {{ barMeters = c; break; }}
+      if (selectedEvent()?.tag_name === 'vru_close_interaction') {{
+        barMeters = 5;
+      }} else {{
+        for (const c of candidates) {{
+          if (c / metersPerPixel > 40 && c / metersPerPixel < 200) {{ barMeters = c; break; }}
+        }}
       }}
       const barPx = barMeters / metersPerPixel;
       const x = viewWidth() - barPx - 20;
