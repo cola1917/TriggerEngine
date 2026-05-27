@@ -154,6 +154,12 @@ Thumbs.db
 # Data files
 data/
 viewer.html
+viewer_*.html
+view_v2*.html
+review_payload*/
+review_viewers*/
+review_batch*.json
+perf_profile*.json
 *.tfrecord
 *.tfrecord.*
 *.csv
