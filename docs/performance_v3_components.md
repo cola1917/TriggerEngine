@@ -44,3 +44,43 @@ checking after the broad-phase radius filter.
 
 If `PairCandidatePlan.search_radius_m` is `None`, `SubjectCache` keeps the v2
 full ordered scan plus exact candidate predicates.
+
+## Current Benchmark Conclusion
+
+Baseline after the blocked-trigger tightening, on the first five full Waymo
+validation shards:
+
+- Input: `1445` scenarios from shards `00000` through `00004`
+- Workers: `5`
+- Output mode: summary plus payload JSON and review HTML
+- Review output: `8` review scenarios
+- Wall time before SDC-pair optimization: `33.86s`
+- Wall time after SDC-pair optimization: `29.51s`
+- Engine time after optimization: `61.93s`, down from `82.07s`
+
+The review result stayed unchanged:
+
+- `sdc_blocked_unable_to_proceed`: `5`
+- `cut_in_confirmed`: `1`
+- `sdc_hard_braking`: `1`
+- `vru_close_interaction`: `1`
+
+The observed five-shard runtime projects to roughly `9-12` minutes for
+`100` shards with the same worker count and payload/view generation enabled.
+This is acceptable for review batches but still too slow for rapid parameter
+iteration.
+
+## Next Optimization Boundary
+
+Do not optimize the Waymo adapter yet. The adapter is expensive, but changing
+it risks altering decoded scenario semantics. Keep adapter work for a later
+phase after rule-side and batch workflow bottlenecks are measured more
+precisely.
+
+The next safe areas are:
+
+- Engineering workflow: run large batches summary-first, then generate payloads
+  and HTML only for selected review scenarios.
+- Per-rule profiling: measure candidate counts, scan counts, hit counts, and
+  rule-level elapsed time to identify the remaining slow rules inside the
+  engine.
