@@ -146,6 +146,144 @@ class PerformanceV3ContractTests(unittest.TestCase):
         self.assertEqual(cache.rule_candidate_count("nearby_sdc_pair", "sdc_pair", 0), 1)
         self.assertLessEqual(cache.rule_pair_scan_count("nearby_sdc_pair", "sdc_pair", 0), 59)
 
+    def test_low_ttc_candidate_generation_filters_non_closing_pairs(self):
+        from trigger_engine.engine.subjects import SubjectCache
+        from trigger_engine.operators.builtins import register_builtin_operators
+        from trigger_engine.operators.registry import OperatorRegistry
+        from trigger_engine.rules.engine import RuleEngine
+        from trigger_engine.rules.parser import RuleParser
+
+        counter = CountingPairOperator()
+        registry = OperatorRegistry()
+        register_builtin_operators(registry)
+        registry.register(counter)
+        rule_set = RuleParser().parse_yaml(
+            """
+rules:
+  - id: closing_low_ttc_candidates
+    kind: single_frame
+    subject: sdc_pair
+    when:
+      all:
+        - operator: predicate.count_pair
+        - operator: predicate.low_ttc
+          args:
+            threshold_s: 3.0
+            max_lateral_m: 2.0
+            min_closing_speed_mps: 1.0
+    emit:
+      tag: closing_low_ttc_candidates
+"""
+        )
+        context = make_sparse_sdc_context(agent_count=4)
+        agents = list(context.current_frame.frame.agent_states)
+        agents[0] = agent(0, 0.0, 0.0)
+        agents[0] = type(agents[0])(
+            **{**agents[0].__dict__, "velocity_x": 5.0}
+        )
+        agents[1] = type(agents[1])(
+            **{**agents[1].__dict__, "velocity_x": 2.0}
+        )
+        agents[2] = agent(2, 4.0, 0.0)
+        agents[2] = type(agents[2])(
+            **{**agents[2].__dict__, "velocity_x": 5.0}
+        )
+        updated_frame = type(context.current_frame.frame)(
+            **{**context.current_frame.frame.__dict__, "agent_states": tuple(agents)}
+        )
+        updated_aligned = type(context.current_frame)(
+            frame=updated_frame,
+            visibility=context.current_frame.visibility,
+            available_modalities=context.current_frame.available_modalities,
+        )
+        context = AlignmentContext(
+            scenario_id=context.scenario_id,
+            watermark=context.watermark,
+            observed_frames=(),
+            current_frame=updated_aligned,
+            future_frames=(),
+            input_frames=(updated_aligned,),
+            source=context.source,
+            map_features=context.map_features,
+            sdc_track_index=context.sdc_track_index,
+            sdc_track_id=context.sdc_track_id,
+        )
+        cache = SubjectCache()
+
+        RuleEngine(registry).evaluate(rule_set, context, subject_cache=cache)
+
+        self.assertEqual(counter.calls, ["0:1"])
+        self.assertEqual(
+            cache.rule_candidate_count("closing_low_ttc_candidates", "sdc_pair", 0),
+            1,
+        )
+
+    def test_lane_change_conflict_candidate_generation_filters_stationary_targets(self):
+        from trigger_engine.engine.subjects import SubjectCache
+        from trigger_engine.operators.builtins import register_builtin_operators
+        from trigger_engine.operators.registry import OperatorRegistry
+        from trigger_engine.rules.engine import RuleEngine
+        from trigger_engine.rules.parser import RuleParser
+
+        counter = CountingPairOperator()
+        registry = OperatorRegistry()
+        register_builtin_operators(registry)
+        registry.register(counter)
+        rule_set = RuleParser().parse_yaml(
+            """
+rules:
+  - id: moving_lane_change_conflict_candidates
+    kind: single_frame
+    subject: sdc_pair
+    when:
+      all:
+        - operator: predicate.count_pair
+        - operator: predicate.sdc_lane_change_conflict
+          args:
+            max_front_longitudinal_m: 25.0
+            max_behind_longitudinal_m: 20.0
+            max_lateral_m: 3.0
+            min_target_speed_mps: 1.0
+    emit:
+      tag: moving_lane_change_conflict_candidates
+"""
+        )
+        context = make_sparse_sdc_context(agent_count=4)
+        agents = list(context.current_frame.frame.agent_states)
+        agents[1] = type(agents[1])(
+            **{**agents[1].__dict__, "velocity_x": 2.0}
+        )
+        agents[2] = agent(2, 6.0, 0.0)
+        updated_frame = type(context.current_frame.frame)(
+            **{**context.current_frame.frame.__dict__, "agent_states": tuple(agents)}
+        )
+        updated_aligned = type(context.current_frame)(
+            frame=updated_frame,
+            visibility=context.current_frame.visibility,
+            available_modalities=context.current_frame.available_modalities,
+        )
+        context = AlignmentContext(
+            scenario_id=context.scenario_id,
+            watermark=context.watermark,
+            observed_frames=(),
+            current_frame=updated_aligned,
+            future_frames=(),
+            input_frames=(updated_aligned,),
+            source=context.source,
+            map_features=context.map_features,
+            sdc_track_index=context.sdc_track_index,
+            sdc_track_id=context.sdc_track_id,
+        )
+        cache = SubjectCache()
+
+        RuleEngine(registry).evaluate(rule_set, context, subject_cache=cache)
+
+        self.assertEqual(counter.calls, ["0:1"])
+        self.assertEqual(
+            cache.rule_candidate_count("moving_lane_change_conflict_candidates", "sdc_pair", 0),
+            1,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

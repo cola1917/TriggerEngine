@@ -41,6 +41,10 @@
   emitted count, and elapsed seconds.
 - [x] Use first-five-shard profiling output to identify current slow rules:
   `low_ttc_pair`, `lane_change_conflict`, and `sdc_repeated_lane_change`.
+- [x] Optimize `low_ttc_pair` with closing-speed candidate gating and cheap
+  predicate ordering before lane/path matching.
+- [x] Optimize `lane_change_conflict` with moving-target candidate gating and
+  cheap relative-position checks before lane matching.
 - [ ] Use profiling output to decide whether lane matching, temporal rules, or
   specific high-value operators need the next optimization pass.
 

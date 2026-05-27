@@ -123,3 +123,25 @@ engine rules:
 
 The next code-level optimization should start with `low_ttc_pair` candidate
 gating or cheaper lane/path filtering, then revisit lane-change map matching.
+
+## TTC and Conflict Candidate Gating
+
+The first follow-up optimization kept review output unchanged and moved cheap
+kinematic gates before expensive lane/path matching:
+
+- `low_ttc_pair` now candidate-filters by closing speed before rule evaluation.
+- `low_ttc_pair` evaluates front/TTC predicates before `same_lane_or_path`.
+- `lane_change_conflict` filters stationary targets in candidate generation.
+- `lane_change_conflict` checks relative position and target speed before lane
+  matching.
+
+First-five-shard profile after this pass:
+
+- Review output stayed unchanged at `8` review scenarios.
+- Engine time improved from `61.89s` to `53.97s`.
+- `low_ttc_pair` improved from `29.24s` to `2.24s`.
+- `lane_change_conflict` candidates dropped from `18829` to `8482`.
+
+The remaining dominant costs are lane matching in `lane_change_conflict` and
+`sdc_repeated_lane_change`. Further optimization should focus on lane-match
+reuse or on narrowing/removing repeated lane-change review semantics.

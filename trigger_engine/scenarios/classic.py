@@ -51,13 +51,6 @@ rules:
         - operator: predicate.pair_ego_speed_above
           args:
             threshold_mps: 0.5
-        - operator: predicate.same_lane_or_path
-          args:
-            max_lane_lateral_m: 1.8
-            max_heading_delta_rad: 0.7
-            fallback_max_lateral_m: 1.2
-            fallback_max_heading_delta_rad: 0.35
-            allow_fallback_without_map: true
         - operator: predicate.pair_in_front
           args:
             min_longitudinal_m: 1.0
@@ -67,6 +60,13 @@ rules:
             threshold_s: 3.0
             max_lateral_m: 2.0
             min_closing_speed_mps: 1.0
+        - operator: predicate.same_lane_or_path
+          args:
+            max_lane_lateral_m: 1.8
+            max_heading_delta_rad: 0.7
+            fallback_max_lateral_m: 1.2
+            fallback_max_heading_delta_rad: 0.35
+            allow_fallback_without_map: true
     emit:
       tag: low_ttc_pair
       intent: supporting

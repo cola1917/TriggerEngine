@@ -1687,6 +1687,34 @@ class SdcLaneChangeConflictOperator:
                 {"ego_type": subject.ego.object_type, "other_type": subject.other.object_type},
             )
 
+        dx = subject.other.center.x - subject.ego.center.x
+        dy = subject.other.center.y - subject.ego.center.y
+        lon, lat = _rotate(dx, dy, subject.ego.heading)
+        max_front = args.get("max_front_longitudinal_m", 25.0)
+        max_behind = args.get("max_behind_longitudinal_m", 20.0)
+        max_lateral = args.get("max_lateral_m", 3.0)
+        if lon > max_front or lon < -max_behind or abs(lat) > max_lateral:
+            return OperatorResult(
+                self.name, "agent_pair", subject.subject_id,
+                frame.frame.step_index, frame.frame.timestamp_seconds,
+                False, {"longitudinal_m": lon, "lateral_m": lat},
+            )
+
+        other_speed = _speed(subject.other)
+        min_target_speed = args.get("min_target_speed_mps", 0.0)
+        if other_speed < min_target_speed:
+            return OperatorResult(
+                self.name, "agent_pair", subject.subject_id,
+                frame.frame.step_index, frame.frame.timestamp_seconds,
+                False,
+                {
+                    "other_speed_mps": other_speed,
+                    "min_target_speed_mps": min_target_speed,
+                    "longitudinal_m": lon,
+                    "lateral_m": lat,
+                },
+            )
+
         from .lane_matching import match_agent_to_lane_cached
 
         window_seconds = args.get("window_seconds", 3.0)
@@ -1769,35 +1797,8 @@ class SdcLaneChangeConflictOperator:
                 },
             )
 
-        dx = subject.other.center.x - subject.ego.center.x
-        dy = subject.other.center.y - subject.ego.center.y
-        lon, lat = _rotate(dx, dy, subject.ego.heading)
-        max_front = args.get("max_front_longitudinal_m", 25.0)
-        max_behind = args.get("max_behind_longitudinal_m", 20.0)
-        max_lateral = args.get("max_lateral_m", 3.0)
-        if lon > max_front or lon < -max_behind or abs(lat) > max_lateral:
-            return OperatorResult(
-                self.name, "agent_pair", subject.subject_id,
-                frame.frame.step_index, frame.frame.timestamp_seconds,
-                False, {"longitudinal_m": lon, "lateral_m": lat},
-            )
-
         ego_forward_speed, _ = _rotate(subject.ego.velocity_x, subject.ego.velocity_y, subject.ego.heading)
         other_forward_speed, _ = _rotate(subject.other.velocity_x, subject.other.velocity_y, subject.ego.heading)
-        other_speed = _speed(subject.other)
-        min_target_speed = args.get("min_target_speed_mps", 0.0)
-        if other_speed < min_target_speed:
-            return OperatorResult(
-                self.name, "agent_pair", subject.subject_id,
-                frame.frame.step_index, frame.frame.timestamp_seconds,
-                False,
-                {
-                    "other_speed_mps": other_speed,
-                    "min_target_speed_mps": min_target_speed,
-                    "longitudinal_m": lon,
-                    "lateral_m": lat,
-                },
-            )
         max_ttc = args.get("max_ttc_s", 4.0)
         min_closing = args.get("min_closing_speed_mps", 0.5)
         ttc = float("inf")

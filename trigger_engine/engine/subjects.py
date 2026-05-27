@@ -69,9 +69,13 @@ class PairCandidatePredicate:
                 and lon >= float(self.args.get("min_longitudinal_m", 0.0))
             )
         if self.operator_name == "predicate.low_ttc":
+            dvx = ego.velocity_x - other.velocity_x
+            dvy = ego.velocity_y - other.velocity_y
+            closing_speed, _ = _rotate(dvx, dvy, ego.heading)
             return (
                 lat_abs <= float(self.args.get("max_lateral_m", 4.0))
                 and lon > 0.0
+                and closing_speed >= float(self.args.get("min_closing_speed_mps", 0.1))
             )
         if self.operator_name == "predicate.pair_ego_hard_braking":
             return (
@@ -93,6 +97,8 @@ class PairCandidatePredicate:
                 and lat_abs <= float(self.args.get("max_lateral_m", 2.5))
             )
         if self.operator_name == "predicate.sdc_lane_change_conflict":
+            if _speed(other) < float(self.args.get("min_target_speed_mps", 0.0)):
+                return False
             return (
                 -float(self.args.get("max_behind_longitudinal_m", 20.0))
                 <= lon
@@ -553,6 +559,10 @@ def _rotate(dx: float, dy: float, heading: float) -> tuple[float, float]:
     cos_h = math.cos(heading)
     sin_h = math.sin(heading)
     return dx * cos_h + dy * sin_h, -dx * sin_h + dy * cos_h
+
+
+def _speed(agent) -> float:
+    return math.sqrt(agent.velocity_x ** 2 + agent.velocity_y ** 2)
 
 
 def _canonicalize_unordered_pairs(pairs: list) -> list:
