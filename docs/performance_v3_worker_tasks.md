@@ -49,6 +49,9 @@
   lateral-displacement gate before lane matching.
 - [x] Verify first-five-shard review output is unchanged after lane-review
   narrowing.
+- [x] Cache red-light stop-line directions and lane heading change checks.
+- [x] Verify first-five-shard review output is unchanged after red-light
+  geometry caching.
 - [ ] Use profiling output to decide whether red-light map checks, `low_ttc_pair`,
   or hard-braking pair generation need the next optimization pass.
 

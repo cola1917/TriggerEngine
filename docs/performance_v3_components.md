@@ -168,3 +168,23 @@ First-five-shard profile after this pass:
 After this pass, the dominant engine-side costs moved away from lane review
 rules and back to red-light map checks, `low_ttc_pair`, and hard-braking pair
 generation.
+
+## Red-Light Geometry Cache
+
+The third follow-up optimization added scenario-local caches for repeated
+red-light geometry:
+
+- `_find_red_light_and_lane` now caches red-light stop-line lane directions per
+  frame.
+- `red_light_crossing_transition` now caches lane heading change checks per
+  lane stop point and lookahead distance.
+
+First-five-shard profile after this pass:
+
+- Review output stayed unchanged at `8` review scenarios.
+- Engine time improved slightly from `27.57s` to `26.67s`.
+- `red_light_stop_line_crossed` improved from `5.89s` to `5.02s`.
+- `red_light_running` improved from `5.38s` to `4.56s`.
+
+The modest gain suggests the remaining red-light cost is dominated by per-frame
+rule evaluation and future heading scans, not only stop-line geometry.

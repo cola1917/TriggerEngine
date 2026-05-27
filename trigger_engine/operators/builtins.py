@@ -1130,6 +1130,30 @@ def _lane_heading_change_from_stop(lane_polyline, stop_point, lookahead_m: float
     return _heading_delta(start_heading, end_heading)
 
 
+def _lane_heading_change_from_stop_cached(
+    context,
+    lane_id: int,
+    lane_polyline,
+    stop_point,
+    lookahead_m: float,
+) -> float | None:
+    cache = getattr(context, "lane_heading_change_cache", None)
+    key = (
+        lane_id,
+        stop_point.x,
+        stop_point.y,
+        stop_point.z,
+        lookahead_m,
+    )
+    if cache is not None and key in cache:
+        return cache[key]
+
+    result = _lane_heading_change_from_stop(lane_polyline, stop_point, lookahead_m)
+    if cache is not None:
+        cache[key] = result
+    return result
+
+
 def _lane_ids(values) -> set[int]:
     return {int(value) for value in values or ()}
 
@@ -1155,6 +1179,24 @@ def _are_longitudinally_connected(map_features, from_lane_id: int, to_lane_id: i
 def _find_red_light_and_lane(context, frame):
     stop_states = {"stop", "arrow_stop"}
     map_features = getattr(context, "map_features", {}) if context is not None else {}
+    cache = getattr(context, "red_light_lane_cache", None)
+    key = (
+        frame.frame.step_index,
+        frame.frame.timestamp_seconds,
+        tuple(
+            (
+                tl.lane_id,
+                tl.state,
+                tl.stop_point.x if tl.stop_point is not None else None,
+                tl.stop_point.y if tl.stop_point is not None else None,
+                tl.stop_point.z if tl.stop_point is not None else None,
+            )
+            for tl in frame.frame.traffic_lights
+        ),
+    )
+    if cache is not None and key in cache:
+        return cache[key]
+
     results = []
     for tl in frame.frame.traffic_lights:
         if tl.state in stop_states and tl.stop_point is not None:
@@ -1165,6 +1207,9 @@ def _find_red_light_and_lane(context, frame):
             if direction is None:
                 continue
             results.append((tl, direction))
+    results = tuple(results)
+    if cache is not None:
+        cache[key] = results
     return results
 
 
@@ -1399,8 +1444,8 @@ class RedLightCrossingTransitionOperator:
             if max_lane_heading_change is not None:
                 lane = context.map_features.get(current_lane_id)
                 if lane is not None:
-                    lane_heading_change = _lane_heading_change_from_stop(
-                        lane.polyline, tl.stop_point, lane_lookahead
+                    lane_heading_change = _lane_heading_change_from_stop_cached(
+                        context, current_lane_id, lane.polyline, tl.stop_point, lane_lookahead
                     )
                     if (
                         lane_heading_change is not None
@@ -1442,7 +1487,9 @@ class RedLightCrossingTransitionOperator:
                                 "lateral_m": lat,
                                 "before_frame_index": earlier.frame.step_index,
                                 "lane_heading_change_rad": (
-                                    _lane_heading_change_from_stop(
+                                    _lane_heading_change_from_stop_cached(
+                                        context,
+                                        current_lane_id,
                                         context.map_features[current_lane_id].polyline,
                                         tl.stop_point,
                                         lane_lookahead,

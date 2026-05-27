@@ -31,3 +31,5 @@ class AlignmentContext:
     sdc_track_id: int | None = None
     lane_match_cache: dict[tuple, object] = field(default_factory=dict, compare=False, hash=False)
     lane_match_index_cache: dict[tuple, object] = field(default_factory=dict, compare=False, hash=False)
+    red_light_lane_cache: dict[tuple, object] = field(default_factory=dict, compare=False, hash=False)
+    lane_heading_change_cache: dict[tuple, object] = field(default_factory=dict, compare=False, hash=False)
