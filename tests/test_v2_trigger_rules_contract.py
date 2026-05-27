@@ -130,6 +130,20 @@ class V2TriggerRulesContractTests(unittest.TestCase):
         self.assertEqual(len(vru_events), 1)
         self.assertEqual(vru_events[0].metadata["risk_level"], "medium")
 
+    def test_vru_close_interaction_downgrades_wide_low_ttc_candidate(self):
+        current = aligned_frame(
+            10,
+            (
+                agent(1, 10, x=0.0, y=0.0, vx=6.0, object_type="vehicle"),
+                agent(20, 10, x=9.0, y=3.6, vx=2.0, object_type="pedestrian"),
+            ),
+        )
+        result = engine_result(context((current,)))
+        vru_events = [event for event in result.events if event.tag_name == "vru_close_interaction"]
+
+        self.assertEqual(len(vru_events), 1)
+        self.assertEqual(vru_events[0].metadata["risk_level"], "medium")
+
     def test_vru_close_interaction_rejects_wide_slow_pedestrian(self):
         current = aligned_frame(
             10,

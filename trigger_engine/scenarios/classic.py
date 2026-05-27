@@ -406,8 +406,10 @@ rules:
             wide_lateral_min_closing_speed_mps: 1.5
             immediate_distance_m: 6.0
             max_ttc_s: 4.0
-            high_immediate_distance_m: 5.0
-            high_max_ttc_s: 3.0
+            high_immediate_distance_m: 4.5
+            high_max_ttc_s: 2.5
+            high_close_lateral_m: 3.0
+            high_ttc_lateral_m: 3.5
             high_ego_response_max_distance_m: 10.0
             ego_response_window_seconds: 1.0
             ego_response_max_acceleration_mps2: -2.0
@@ -417,12 +419,16 @@ rules:
                 max_distance_m: 10.0
                 max_lateral_m: 4.0
                 close_lateral_m: 3.0
+                high_close_lateral_m: 2.6
+                high_ttc_lateral_m: 3.2
                 min_closing_speed_mps: 0.8
                 wide_lateral_min_closing_speed_mps: 1.5
               cyclist:
                 max_distance_m: 12.0
                 max_lateral_m: 5.0
                 close_lateral_m: 3.5
+                high_close_lateral_m: 3.0
+                high_ttc_lateral_m: 4.0
                 min_closing_speed_mps: 0.5
                 wide_lateral_min_closing_speed_mps: 1.2
     emit:

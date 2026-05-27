@@ -591,11 +591,26 @@ class VruCloseInteractionOperator:
             or ego_response
         )
         risk_reasons = []
-        if distance <= args.get("high_immediate_distance_m", 5.0):
+        high_close_lateral = type_args.get(
+            "high_close_lateral_m",
+            args.get("high_close_lateral_m", close_lateral),
+        )
+        high_ttc_lateral = type_args.get(
+            "high_ttc_lateral_m",
+            args.get("high_ttc_lateral_m", max_lat),
+        )
+        if (
+            distance <= args.get("high_immediate_distance_m", 5.0)
+            and abs(lat) <= high_close_lateral
+        ):
             risk_reasons.append("immediate_distance")
-        if ttc <= args.get("high_max_ttc_s", 3.0):
+        if ttc <= args.get("high_max_ttc_s", 3.0) and abs(lat) <= high_ttc_lateral:
             risk_reasons.append("low_ttc")
-        if ego_response and distance <= args.get("high_ego_response_max_distance_m", 10.0):
+        if (
+            ego_response
+            and distance <= args.get("high_ego_response_max_distance_m", 10.0)
+            and abs(lat) <= high_ttc_lateral
+        ):
             risk_reasons.append("ego_response")
         risk_level = "high" if risk_reasons else "medium"
         value = (
@@ -630,6 +645,8 @@ class VruCloseInteractionOperator:
                 "max_distance_m": max_distance,
                 "max_lateral_m": max_lat,
                 "close_lateral_m": close_lateral,
+                "high_close_lateral_m": high_close_lateral,
+                "high_ttc_lateral_m": high_ttc_lateral,
                 "min_closing_speed_mps": min_closing,
                 "vru_type": subject.other.object_type,
                 "event_metadata": {
