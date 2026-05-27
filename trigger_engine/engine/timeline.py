@@ -16,6 +16,7 @@ class TagKey:
 class TagTimeline:
     def __init__(self) -> None:
         self._data: dict[tuple[str, str, str | int | None, int], bool] = {}
+        self._events: dict[tuple[str, str, str | int | None, int], TagEvent] = {}
         self._timestamps: dict[int, float] = {}
         self._subject_frames: dict[tuple[str, str, str | int | None], set[int]] = {}
         self._tag_subjects: dict[tuple[str, str], set[str | int | None]] = {}
@@ -26,6 +27,7 @@ class TagTimeline:
         for event in events:
             key = (event.tag_name, event.subject_type, event.subject_id, event.frame_index)
             timeline._data[key] = True
+            timeline._events[key] = event
             timeline._timestamps[event.frame_index] = event.timestamp_seconds
             sf_key = (event.tag_name, event.subject_type, event.subject_id)
             timeline._subject_frames.setdefault(sf_key, set()).add(event.frame_index)
@@ -36,6 +38,11 @@ class TagTimeline:
     def has_at(self, key: TagKey, frame_index: int) -> bool:
         return self._data.get(
             (key.tag_name, key.subject_type, key.subject_id, frame_index), False
+        )
+
+    def event_at(self, key: TagKey, frame_index: int) -> TagEvent | None:
+        return self._events.get(
+            (key.tag_name, key.subject_type, key.subject_id, frame_index)
         )
 
     def timestamp_at(self, frame_index: int) -> float:

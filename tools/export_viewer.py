@@ -125,6 +125,125 @@ def classify_event_group(event) -> str:
     return "debug"
 
 
+def _event_field(event, name: str, default=None):
+    return getattr(event, name) if hasattr(event, name) else event.get(name, default)
+
+
+def event_metadata(event) -> dict:
+    metadata = _event_field(event, "metadata", {})
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def event_tag(event) -> str:
+    return str(_event_field(event, "tag_name", ""))
+
+
+def event_target_id(event) -> str | None:
+    metadata = event_metadata(event)
+    target_id = metadata.get("target_id")
+    if target_id is not None:
+        return str(target_id)
+    subject_id = _event_field(event, "subject_id", None)
+    subject_type = _event_field(event, "subject_type", "")
+    if subject_type in ("agent_pair", "sdc_pair") and isinstance(subject_id, str) and ":" in subject_id:
+        return subject_id.split(":", 1)[1]
+    return str(subject_id) if subject_id is not None else None
+
+
+def event_risk_level(event) -> str:
+    metadata = event_metadata(event)
+    risk_level = metadata.get("risk_level")
+    if risk_level is not None:
+        return str(risk_level)
+    return "high" if classify_event_group(event) == "primary" else "candidate"
+
+
+_EXPLANATION_KEYS = frozenset({
+    "distance_m",
+    "longitudinal_m",
+    "lateral_m",
+    "closing_speed_mps",
+    "lateral_closing_speed_mps",
+    "ttc_s",
+    "heading_delta_rad",
+    "speed_drop_mps",
+    "acceleration_mps2",
+    "ego_acceleration_mps2",
+    "ego_speed_delta_mps",
+    "ego_speed_mps",
+    "other_speed_mps",
+    "vru_speed_mps",
+    "other_type",
+    "vru_type",
+    "conflict_mode",
+})
+
+
+def event_explanation(event) -> dict[str, object]:
+    metadata = event_metadata(event)
+    metrics = {}
+
+    def add_operator_metrics(operator_metadata):
+        if not isinstance(operator_metadata, dict):
+            return
+        for details in operator_metadata.values():
+            if not isinstance(details, dict):
+                continue
+            for key in _EXPLANATION_KEYS:
+                if key in details and details[key] is not None:
+                    metrics[key] = details[key]
+
+    add_operator_metrics(metadata.get("operator_metadata"))
+    supporting_event_metadata = metadata.get("supporting_event_metadata")
+    if isinstance(supporting_event_metadata, (list, tuple)):
+        for supporting in supporting_event_metadata:
+            if not isinstance(supporting, dict):
+                continue
+            supporting_metadata = supporting.get("metadata")
+            if isinstance(supporting_metadata, dict):
+                add_operator_metrics(supporting_metadata.get("operator_metadata"))
+    return {
+        "tag_name": event_tag(event),
+        "risk_level": event_risk_level(event),
+        "risk_reasons": metadata.get("risk_reasons", ()),
+        "subject_id": _event_field(event, "subject_id", None),
+        "target_id": event_target_id(event),
+        "frame_index": _event_field(event, "frame_index", None),
+        "timestamp_seconds": _event_field(event, "timestamp_seconds", None),
+        "metrics": metrics,
+    }
+
+
+def summarize_events(events: list) -> dict[str, object]:
+    by_group = {"primary": 0, "supporting": 0, "debug": 0}
+    by_tag = {}
+    by_risk = {}
+    unique_targets = set()
+    explanations = []
+    for event in events:
+        group = classify_event_group(event)
+        by_group[group] = by_group.get(group, 0) + 1
+        tag = event_tag(event)
+        by_tag[tag] = by_tag.get(tag, 0) + 1
+        risk = event_risk_level(event)
+        by_risk[risk] = by_risk.get(risk, 0) + 1
+        target_id = event_target_id(event)
+        if target_id is not None:
+            unique_targets.add(target_id)
+        if group in ("primary", "supporting"):
+            explanations.append(event_explanation(event))
+    return {
+        "event_counts_by_group": dict(sorted(by_group.items())),
+        "event_counts_by_tag": dict(sorted(by_tag.items())),
+        "event_counts_by_risk": dict(sorted(by_risk.items())),
+        "primary_event_count": by_group.get("primary", 0),
+        "candidate_event_count": by_group.get("supporting", 0),
+        "unique_target_count": len(unique_targets),
+        "unique_target_ids": sorted(unique_targets),
+        "event_explanations": explanations,
+    }
+
+
 def _compute_agent_bounds(frames, margin: float) -> dict[str, float]:
     xs, ys = [], []
     for frame in frames:
@@ -261,6 +380,7 @@ def build_viewer_payload(
             "event_bounds_by_event_index": event_bounds_by_event_index,
         },
         "stats": asdict(result.stats),
+        "review_summary": summarize_events(events_list),
         "diagnostics": [asdict(diagnostic) for diagnostic in result.diagnostics],
     }
 

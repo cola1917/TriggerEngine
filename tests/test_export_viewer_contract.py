@@ -102,6 +102,12 @@ class ExportViewerContractTests(unittest.TestCase):
         self.assertEqual(payload["events"][0]["subject_id"], "1:2")
         self.assertEqual(payload["events"][0]["metadata"]["supporting_frame_indices"], (0, 1, 2))
         self.assertEqual(payload["stats"]["events_emitted"], 1)
+        self.assertEqual(payload["review_summary"]["primary_event_count"], 1)
+        self.assertEqual(payload["review_summary"]["unique_target_count"], 1)
+        self.assertEqual(
+            payload["review_summary"]["event_counts_by_tag"],
+            {"cut_in_confirmed": 1},
+        )
 
     def test_medium_vru_event_is_kept_but_not_default_review(self):
         from tools.export_viewer import build_viewer_payload
@@ -138,6 +144,81 @@ class ExportViewerContractTests(unittest.TestCase):
         self.assertEqual(payload["events"][0]["metadata"]["risk_level"], "medium")
         self.assertEqual(payload["review_event_indices"], [])
         self.assertEqual(payload["event_groups"]["supporting"], [0])
+        self.assertEqual(payload["review_summary"]["candidate_event_count"], 1)
+        self.assertEqual(payload["review_summary"]["event_counts_by_risk"], {"medium": 1})
+
+    def test_event_explanation_extracts_operator_metrics(self):
+        from tools.export_viewer import event_explanation
+
+        event = TagEvent(
+            scenario_id="scenario-viewer",
+            source="unit",
+            frame_index=2,
+            timestamp_seconds=0.2,
+            tag_name="vru_close_interaction",
+            subject_type="sdc_pair",
+            subject_id="1:20",
+            value=True,
+            rule_id="vru_close_interaction",
+            metadata={
+                "intent": "review",
+                "target_id": 20,
+                "risk_level": "high",
+                "risk_reasons": ("low_ttc",),
+                "operator_metadata": {
+                    "predicate.vru_close_interaction": {
+                        "distance_m": 4.2,
+                        "ttc_s": 1.1,
+                        "vru_type": "pedestrian",
+                    }
+                },
+            },
+        )
+
+        explanation = event_explanation(event)
+
+        self.assertEqual(explanation["target_id"], "20")
+        self.assertEqual(explanation["risk_level"], "high")
+        self.assertEqual(explanation["metrics"]["distance_m"], 4.2)
+        self.assertEqual(explanation["metrics"]["ttc_s"], 1.1)
+
+    def test_event_explanation_extracts_temporal_support_metrics(self):
+        from tools.export_viewer import event_explanation
+
+        event = TagEvent(
+            scenario_id="scenario-viewer",
+            source="unit",
+            frame_index=8,
+            timestamp_seconds=0.8,
+            tag_name="cut_in_confirmed",
+            subject_type="agent_pair",
+            subject_id="1:2",
+            value=True,
+            rule_id="cut_in_confirmed",
+            metadata={
+                "intent": "review",
+                "supporting_event_metadata": (
+                    {
+                        "tag_name": "same_path_overlap",
+                        "frame_index": 8,
+                        "timestamp_seconds": 0.8,
+                        "metadata": {
+                            "operator_metadata": {
+                                "predicate.same_path_overlap": {
+                                    "longitudinal_m": 8.0,
+                                    "lateral_m": 1.2,
+                                }
+                            }
+                        },
+                    },
+                ),
+            },
+        )
+
+        explanation = event_explanation(event)
+
+        self.assertEqual(explanation["metrics"]["longitudinal_m"], 8.0)
+        self.assertEqual(explanation["metrics"]["lateral_m"], 1.2)
 
     def test_render_viewer_html_embeds_parseable_payload(self):
         from tools.export_viewer import build_viewer_payload, render_viewer_html

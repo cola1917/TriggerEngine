@@ -45,11 +45,32 @@ def should_keep_payload_event(event) -> bool:
     )
 
 
+def _count_events(events: list) -> dict[str, object]:
+    from tools.export_viewer import event_risk_level, event_tag, event_target_id
+
+    tag_counts = Counter()
+    risk_counts = Counter()
+    targets = set()
+    for event in events:
+        tag_counts[event_tag(event)] += 1
+        risk_counts[event_risk_level(event)] += 1
+        target_id = event_target_id(event)
+        if target_id is not None:
+            targets.add(target_id)
+    return {
+        "event_count": len(events),
+        "tag_counts": dict(sorted(tag_counts.items())),
+        "risk_counts": dict(sorted(risk_counts.items())),
+        "unique_target_count": len(targets),
+        "unique_target_ids": sorted(targets),
+    }
+
+
 def evaluate_shard(path_text: str, payload_options: dict | None = None) -> dict:
     from trigger_engine.alignment.scenario_alignment import ScenarioAlignment
     from trigger_engine.data.adapters import WaymoScenarioAdapter
     from trigger_engine.data.readers import TFRecordScenarioReader
-    from tools.export_viewer import build_viewer_payload, classify_event_group
+    from tools.export_viewer import build_viewer_payload, classify_event_group, event_explanation
 
     path = Path(path_text)
     reader = TFRecordScenarioReader()
@@ -59,8 +80,13 @@ def evaluate_shard(path_text: str, payload_options: dict | None = None) -> dict:
 
     timings = Counter()
     review_counts = Counter()
+    candidate_counts = Counter()
+    review_risk_counts = Counter()
+    candidate_risk_counts = Counter()
     review_refs = []
     payload_outputs = []
+    payload_scenarios = 0
+    multi_event_scenarios = 0
     scenario_count = 0
     started = time.perf_counter()
 
@@ -90,14 +116,31 @@ def evaluate_shard(path_text: str, payload_options: dict | None = None) -> dict:
         if not review_events and not payload_events:
             continue
 
+        payload_scenarios += 1
+        review_event_stats = _count_events(review_events)
+        payload_event_stats = _count_events(payload_events)
+        if review_event_stats["event_count"] > 1:
+            multi_event_scenarios += 1
         tags = [event.tag_name for event in review_events]
         for tag in tags:
             review_counts[tag] += 1
+        for tag, count in payload_event_stats["tag_counts"].items():
+            candidate_counts[tag] += count
+        for risk, count in review_event_stats["risk_counts"].items():
+            review_risk_counts[risk] += count
+        for risk, count in payload_event_stats["risk_counts"].items():
+            candidate_risk_counts[risk] += count
         ref = {
             "source": str(path),
             "scenario_index": scenario_index,
             "scenario_id": context.scenario_id,
             "review_tags": tags,
+            "primary_event_count": review_event_stats["event_count"],
+            "candidate_event_count": payload_event_stats["event_count"],
+            "unique_target_count": payload_event_stats["unique_target_count"],
+            "risk_counts": review_event_stats["risk_counts"],
+            "candidate_risk_counts": payload_event_stats["risk_counts"],
+            "event_explanations": [event_explanation(event) for event in review_events],
         }
         if payload_options is not None:
             payload_dir = Path(str(payload_options["payload_dir"]))
@@ -126,6 +169,13 @@ def evaluate_shard(path_text: str, payload_options: dict | None = None) -> dict:
         "scenarios": scenario_count,
         "review_scenarios": len(review_refs),
         "review_event_counts": dict(sorted(review_counts.items())),
+        "review_quality": {
+            "payload_scenarios": payload_scenarios,
+            "multi_event_scenarios": multi_event_scenarios,
+            "candidate_event_counts": dict(sorted(candidate_counts.items())),
+            "review_risk_counts": dict(sorted(review_risk_counts.items())),
+            "candidate_risk_counts": dict(sorted(candidate_risk_counts.items())),
+        },
         "seconds": elapsed,
         "timings": dict(sorted(timings.items())),
         "review_scenario_refs": review_refs,
@@ -135,27 +185,60 @@ def evaluate_shard(path_text: str, payload_options: dict | None = None) -> dict:
 
 def merge_shard_summaries(shards: list[dict], elapsed: float) -> dict:
     review_counts = Counter()
+    candidate_counts = Counter()
+    review_risk_counts = Counter()
+    candidate_risk_counts = Counter()
     timings = Counter()
     files = {}
     review_refs = []
     total = 0
+    payload_scenarios = 0
+    multi_event_scenarios = 0
 
     for shard in sorted(shards, key=lambda item: item["path"]):
         total += int(shard["scenarios"])
+        quality = shard.get("review_quality", {})
+        payload_scenarios += int(quality.get("payload_scenarios", 0))
+        multi_event_scenarios += int(quality.get("multi_event_scenarios", 0))
         files[shard["file"]] = {
             "scenarios": shard["scenarios"],
             "review_scenarios": shard["review_scenarios"],
+            "payload_scenarios": quality.get("payload_scenarios", 0),
+            "multi_event_scenarios": quality.get("multi_event_scenarios", 0),
             "seconds": shard["seconds"],
         }
         review_counts.update(shard.get("review_event_counts", {}))
+        candidate_counts.update(quality.get("candidate_event_counts", {}))
+        review_risk_counts.update(quality.get("review_risk_counts", {}))
+        candidate_risk_counts.update(quality.get("candidate_risk_counts", {}))
         timings.update(shard.get("timings", {}))
         review_refs.extend(shard.get("review_scenario_refs", []))
 
     review_refs.sort(key=lambda item: (item["source"], item["scenario_index"]))
+    multi_event_refs = [
+        ref for ref in review_refs
+        if int(ref.get("primary_event_count", 0)) > 1
+    ]
     return {
         "total_scenarios": total,
         "review_scenarios": len(review_refs),
         "review_event_counts": dict(sorted(review_counts.items())),
+        "review_quality": {
+            "payload_scenarios": payload_scenarios,
+            "review_scenarios": len(review_refs),
+            "multi_event_scenarios": multi_event_scenarios,
+            "candidate_event_counts": dict(sorted(candidate_counts.items())),
+            "review_risk_counts": dict(sorted(review_risk_counts.items())),
+            "candidate_risk_counts": dict(sorted(candidate_risk_counts.items())),
+            "top_multi_event_scenarios": sorted(
+                multi_event_refs,
+                key=lambda ref: (
+                    -int(ref.get("primary_event_count", 0)),
+                    ref["source"],
+                    int(ref["scenario_index"]),
+                ),
+            )[:10],
+        },
         "seconds": elapsed,
         "scenarios_per_second": total / elapsed if elapsed else 0.0,
         "timings": dict(sorted(timings.items())),

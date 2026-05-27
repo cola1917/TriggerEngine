@@ -118,6 +118,9 @@ class TemporalRuleEngine:
                         metadata["sustained_frames"] = rule.condition.frames
                     if rule.condition.seconds is not None:
                         metadata["sustained_seconds"] = rule.condition.seconds
+                    metadata["supporting_event_metadata"] = self._supporting_event_metadata(
+                        timeline, (key,), supporting,
+                    )
                     events.append(
                         self._build_temporal_event(
                             rule, context, aligned_frame, subject_id, metadata,
@@ -193,6 +196,9 @@ class TemporalRuleEngine:
                         metadata["within_seconds"] = rule.condition.within_seconds
                     if rule.condition.max_gap_frames is not None:
                         metadata["max_gap_frames"] = rule.condition.max_gap_frames
+                    metadata["supporting_event_metadata"] = self._supporting_event_metadata(
+                        timeline, keys, supporting,
+                    )
                     events.append(
                         self._build_temporal_event(
                             rule, context, aligned_frame, subject_id, metadata,
@@ -235,6 +241,26 @@ class TemporalRuleEngine:
             rule_id=rule.rule_id,
             metadata=merged,
         )
+
+    def _supporting_event_metadata(
+        self,
+        timeline: TagTimeline,
+        keys: tuple[TagKey, ...],
+        supporting: tuple[int, ...],
+    ) -> tuple[dict[str, object], ...]:
+        details = []
+        for index, frame_index in enumerate(supporting):
+            key = keys[index] if len(keys) > 1 else keys[0]
+            event = timeline.event_at(key, frame_index)
+            if event is None:
+                continue
+            details.append({
+                "tag_name": event.tag_name,
+                "frame_index": event.frame_index,
+                "timestamp_seconds": event.timestamp_seconds,
+                "metadata": event.metadata,
+            })
+        return tuple(details)
 
     def _aligned_frame_by_step(
         self,

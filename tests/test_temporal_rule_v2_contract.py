@@ -142,7 +142,7 @@ class ApproachDemoOperator:
             frame.frame.step_index,
             frame.frame.timestamp_seconds,
             frame.frame.step_index == 1,
-            {},
+            {"distance_m": 6.0},
         )
 
 
@@ -359,6 +359,12 @@ rules:
         self.assertEqual(events[0].metadata["last_matched_frame_index"], 3)
         self.assertEqual(events[0].metadata["first_matched_timestamp_seconds"], 0.1)
         self.assertEqual(events[0].metadata["last_matched_timestamp_seconds"], 0.3)
+        supporting = events[0].metadata["supporting_event_metadata"]
+        self.assertEqual(supporting[0]["tag_name"], "approach_source")
+        self.assertEqual(
+            supporting[0]["metadata"]["operator_metadata"]["predicate.approach_demo"]["distance_m"],
+            6.0,
+        )
 
 
 if __name__ == "__main__":

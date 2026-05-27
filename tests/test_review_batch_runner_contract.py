@@ -2,6 +2,31 @@ import unittest
 
 
 class ReviewBatchRunnerContractTests(unittest.TestCase):
+    def test_count_events_reports_risk_and_unique_targets(self):
+        from tools.run_review_batch import _count_events
+
+        events = [
+            {
+                "tag_name": "vru_close_interaction",
+                "subject_type": "sdc_pair",
+                "subject_id": "1:20",
+                "metadata": {"intent": "review", "risk_level": "high"},
+            },
+            {
+                "tag_name": "vru_close_interaction",
+                "subject_type": "sdc_pair",
+                "subject_id": "1:21",
+                "metadata": {"intent": "review", "risk_level": "medium"},
+            },
+        ]
+
+        stats = _count_events(events)
+
+        self.assertEqual(stats["event_count"], 2)
+        self.assertEqual(stats["tag_counts"], {"vru_close_interaction": 2})
+        self.assertEqual(stats["risk_counts"], {"high": 1, "medium": 1})
+        self.assertEqual(stats["unique_target_count"], 2)
+
     def test_medium_vru_is_kept_for_payload_but_not_default_review(self):
         from tools.export_viewer import classify_event_group
         from tools.run_review_batch import should_keep_payload_event
@@ -25,6 +50,13 @@ class ReviewBatchRunnerContractTests(unittest.TestCase):
                     "scenarios": 3,
                     "review_scenarios": 1,
                     "review_event_counts": {"cut_in_confirmed": 1},
+                    "review_quality": {
+                        "payload_scenarios": 2,
+                        "multi_event_scenarios": 1,
+                        "candidate_event_counts": {"cut_in_confirmed": 1, "vru_close_interaction": 2},
+                        "review_risk_counts": {"high": 1},
+                        "candidate_risk_counts": {"high": 1, "medium": 2},
+                    },
                     "seconds": 2.0,
                     "timings": {"engine_seconds": 1.0},
                     "review_scenario_refs": [
@@ -33,6 +65,9 @@ class ReviewBatchRunnerContractTests(unittest.TestCase):
                             "scenario_index": 7,
                             "scenario_id": "b",
                             "review_tags": ["cut_in_confirmed"],
+                            "primary_event_count": 2,
+                            "candidate_event_count": 3,
+                            "unique_target_count": 2,
                         }
                     ],
                     "payload_outputs": ["payloads/review_payload_00002_s0007.json"],
@@ -43,6 +78,13 @@ class ReviewBatchRunnerContractTests(unittest.TestCase):
                     "scenarios": 2,
                     "review_scenarios": 1,
                     "review_event_counts": {"red_light_running": 1},
+                    "review_quality": {
+                        "payload_scenarios": 1,
+                        "multi_event_scenarios": 0,
+                        "candidate_event_counts": {"red_light_running": 1},
+                        "review_risk_counts": {"high": 1},
+                        "candidate_risk_counts": {"high": 1},
+                    },
                     "seconds": 1.0,
                     "timings": {"engine_seconds": 0.5},
                     "review_scenario_refs": [
@@ -65,6 +107,17 @@ class ReviewBatchRunnerContractTests(unittest.TestCase):
             summary["review_event_counts"],
             {"cut_in_confirmed": 1, "red_light_running": 1},
         )
+        self.assertEqual(summary["review_quality"]["payload_scenarios"], 3)
+        self.assertEqual(summary["review_quality"]["multi_event_scenarios"], 1)
+        self.assertEqual(
+            summary["review_quality"]["candidate_event_counts"],
+            {"cut_in_confirmed": 1, "red_light_running": 1, "vru_close_interaction": 2},
+        )
+        self.assertEqual(
+            summary["review_quality"]["candidate_risk_counts"],
+            {"high": 2, "medium": 2},
+        )
+        self.assertEqual(summary["review_quality"]["top_multi_event_scenarios"][0]["scenario_id"], "b")
         self.assertEqual(summary["timings"], {"engine_seconds": 1.5})
         self.assertEqual(
             [ref["scenario_id"] for ref in summary["review_scenario_refs"]],
