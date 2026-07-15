@@ -10,6 +10,7 @@ from .ast import (
     PairConfig,
     ReviewEpisodePolicy,
     Rule,
+    RuleDiagnostic,
     RuleEmit,
     RuleSet,
     RuleWindow,
@@ -43,17 +44,18 @@ class RuleParser:
 
         seen_ids: set[str] = set()
         rules: list[Rule] = []
+        diagnostics: list[RuleDiagnostic] = []
 
         for i, rule_raw in enumerate(rules_raw):
-            rule = self._parse_rule(rule_raw, i)
+            rule = self._parse_rule(rule_raw, i, diagnostics)
             if rule.rule_id in seen_ids:
                 raise RuleParseError(f"Duplicate rule id: '{rule.rule_id}'")
             seen_ids.add(rule.rule_id)
             rules.append(rule)
 
-        return RuleSet(rules=tuple(rules))
+        return RuleSet(rules=tuple(rules), diagnostics=tuple(diagnostics))
 
-    def _parse_rule(self, raw: dict, index: int) -> Rule:
+    def _parse_rule(self, raw: dict, index: int, diagnostics: list[RuleDiagnostic]) -> Rule:
         if not isinstance(raw, dict):
             raise RuleParseError(f"rules[{index}] must be a dict")
 
@@ -74,6 +76,7 @@ class RuleParser:
             )
 
         description = raw.get("description")
+        required_modalities = self._parse_required_modalities(raw, index)
 
         window_raw = raw.get("window")
         window = None
@@ -87,11 +90,11 @@ class RuleParser:
             raise RuleParseError(f"rules[{index}].when must be a dict")
 
         if kind == "temporal":
-            condition = self._parse_temporal_condition(when_raw, index)
+            condition = self._parse_temporal_condition(when_raw, index, rule_id, diagnostics)
         else:
             if "all" not in when_raw:
                 raise RuleParseError(f"rules[{index}].when.all is required")
-            condition = self._parse_all_condition(when_raw["all"], index)
+            condition = self._parse_all_condition(when_raw["all"], index, rule_id, diagnostics)
 
         emit_raw = raw.get("emit")
         if not isinstance(emit_raw, dict):
@@ -132,10 +135,30 @@ class RuleParser:
             description=description,
             window=window,
             pair=pair,
+            required_modalities=required_modalities,
         )
 
+    def _parse_required_modalities(self, raw: dict, rule_index: int) -> frozenset[str]:
+        modalities_raw = raw.get("required_modalities")
+        if modalities_raw is None:
+            return frozenset()
+        if not isinstance(modalities_raw, list):
+            raise RuleParseError(f"rules[{rule_index}].required_modalities must be a list")
+        modalities = []
+        for i, modality in enumerate(modalities_raw):
+            if not isinstance(modality, str) or not modality:
+                raise RuleParseError(
+                    f"rules[{rule_index}].required_modalities[{i}] must be a non-empty string"
+                )
+            modalities.append(modality)
+        return frozenset(modalities)
+
     def _parse_temporal_condition(
-        self, when_raw: dict, rule_index: int
+        self,
+        when_raw: dict,
+        rule_index: int,
+        rule_id: str,
+        diagnostics: list[RuleDiagnostic],
     ) -> SustainedTagCondition | SequenceTagCondition:
         # Temporal rules compose previously emitted tags. They should not call
         # operators directly because the compiler validates tag-to-rule links.
@@ -145,7 +168,7 @@ class RuleParser:
             )
 
         if "sequence" in when_raw:
-            return self._parse_sequence_condition(when_raw, rule_index)
+            return self._parse_sequence_condition(when_raw, rule_index, rule_id, diagnostics)
 
         tag_name = when_raw.get("tag")
         if not tag_name:
@@ -168,6 +191,12 @@ class RuleParser:
                 raise RuleParseError(
                     f"rules[{rule_index}].when.sustained.frames must be a positive integer"
                 )
+            self._record_deprecated_frame_window(
+                diagnostics,
+                rule_id,
+                f"rules[{rule_index}].when.sustained.frames",
+                "Use when.sustained.seconds so the rule is independent of source frame rate.",
+            )
             return SustainedTagCondition(tag_name=tag_name, frames=frames)
 
         if seconds is not None:
@@ -182,7 +211,11 @@ class RuleParser:
         )
 
     def _parse_sequence_condition(
-        self, when_raw: dict, rule_index: int
+        self,
+        when_raw: dict,
+        rule_index: int,
+        rule_id: str,
+        diagnostics: list[RuleDiagnostic],
     ) -> SequenceTagCondition:
         sequence_raw = when_raw.get("sequence")
         if not isinstance(sequence_raw, list):
@@ -214,6 +247,12 @@ class RuleParser:
                 raise RuleParseError(
                     f"rules[{rule_index}].when.within_frames must be a positive integer"
                 )
+            self._record_deprecated_frame_window(
+                diagnostics,
+                rule_id,
+                f"rules[{rule_index}].when.within_frames",
+                "Use when.within_seconds so the sequence window is independent of source frame rate.",
+            )
         elif within_seconds is not None:
             if not isinstance(within_seconds, (int, float)) or within_seconds <= 0:
                 raise RuleParseError(
@@ -239,7 +278,13 @@ class RuleParser:
             max_gap_frames=max_gap_frames,
         )
 
-    def _parse_all_condition(self, calls_raw: list, rule_index: int) -> AllCondition:
+    def _parse_all_condition(
+        self,
+        calls_raw: list,
+        rule_index: int,
+        rule_id: str,
+        diagnostics: list[RuleDiagnostic],
+    ) -> AllCondition:
         if not isinstance(calls_raw, list):
             raise RuleParseError(f"rules[{rule_index}].when.all must be a list")
 
@@ -262,14 +307,40 @@ class RuleParser:
                     f"rules[{rule_index}].when.all[{i}].args must be a dict"
                 )
 
+            for_last_n_frames = call_raw.get("for_last_n_frames")
+            if for_last_n_frames is not None:
+                self._record_deprecated_frame_window(
+                    diagnostics,
+                    rule_id,
+                    f"rules[{rule_index}].when.all[{i}].for_last_n_frames",
+                    "Use a seconds-based operator argument or window before removing frame-rate compatibility.",
+                )
+
             call = OperatorCall(
                 operator_name=operator_name,
                 args=args,
-                for_last_n_frames=call_raw.get("for_last_n_frames"),
+                for_last_n_frames=for_last_n_frames,
             )
             calls.append(call)
 
         return AllCondition(calls=tuple(calls))
+
+    def _record_deprecated_frame_window(
+        self,
+        diagnostics: list[RuleDiagnostic],
+        rule_id: str,
+        field_path: str,
+        message: str,
+    ) -> None:
+        diagnostics.append(
+            RuleDiagnostic(
+                level="warning",
+                code="deprecated_frame_window",
+                message=message,
+                rule_id=rule_id,
+                field_path=field_path,
+            )
+        )
 
     def _parse_policy(self, emit_raw: dict, rule_index: int, intent: str = "debug") -> EventPolicy:
         policy_raw = emit_raw.get("policy")

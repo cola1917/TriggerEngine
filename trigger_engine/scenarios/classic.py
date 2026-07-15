@@ -33,7 +33,7 @@ rules:
     when:
       tag: sdc_vehicle_stopped
       sustained:
-        frames: 3
+        seconds: 0.2
     emit:
       tag: sdc_vehicle_stopped_for_3_frames
       intent: debug
@@ -59,6 +59,7 @@ rules:
           args:
             threshold_s: 3.0
             max_lateral_m: 2.0
+            max_longitudinal_m: 60.0
             min_closing_speed_mps: 1.0
         - operator: predicate.same_lane_or_path
           args:
@@ -77,7 +78,7 @@ rules:
     when:
       tag: low_ttc_pair
       sustained:
-        frames: 3
+        seconds: 0.2
     emit:
       tag: persistent_low_ttc_pair
       intent: review
@@ -117,7 +118,7 @@ rules:
     when:
       tag: cut_in_candidate
       sustained:
-        frames: 3
+        seconds: 0.2
     emit:
       tag: cut_in_developing
       intent: debug
@@ -213,7 +214,7 @@ rules:
         - tag: adjacent_vehicle
         - tag: cut_in_lateral_approach
         - tag: same_path_overlap
-      within_frames: 8
+      within_seconds: 0.8
     emit:
       tag: cut_in_confirmed
       intent: review
@@ -234,7 +235,7 @@ rules:
         - tag: cut_in_lateral_approach
         - tag: same_path_overlap
         - tag: low_ttc_pair
-      within_frames: 8
+      within_seconds: 0.8
     emit:
       tag: cut_in_risk
       intent: review
@@ -275,7 +276,7 @@ rules:
     when:
       tag: sdc_vehicle_stopped_at_red
       sustained:
-        frames: 3
+        seconds: 0.2
     emit:
       tag: sdc_vehicle_still_stopped_at_red
       intent: debug
@@ -399,7 +400,7 @@ rules:
             blocker_types: [vehicle, pedestrian, cyclist, unknown]
             only_current_frame: true
             window_seconds: 1.0
-            min_stopped_frames: 6
+            min_stopped_duration_seconds: 0.5
             max_ego_speed_mps: 0.4
             min_recent_ego_motion_mps: 0.2
             max_blocker_speed_mps: 0.8
@@ -529,7 +530,7 @@ rules:
             max_lateral_m: 1.5
             max_heading_delta_rad: 0.7
             min_speed_mps: 2.0
-            min_stable_frames: 2
+            min_stable_duration_seconds: 0.1
             min_lateral_displacement_m: 2.5
             only_current_frame: true
     emit:

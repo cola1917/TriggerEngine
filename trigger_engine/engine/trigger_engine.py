@@ -4,6 +4,7 @@ import time
 from dataclasses import dataclass, field
 
 from trigger_engine.alignment.context import AlignmentContext
+from trigger_engine.data.frames import ScenarioBundle
 from trigger_engine.operators.registry import OperatorRegistry
 from trigger_engine.rules.ast import RuleSet, SequenceTagCondition, SustainedTagCondition
 from trigger_engine.rules.engine import RuleEngine
@@ -349,7 +350,19 @@ class TriggerEngine:
     def evaluate(self, context: AlignmentContext) -> EngineResult:
         plan = self._rule_registry.active_plan()
         subject_cache = self._subject_cache or SubjectCache()
-        diagnostics: list[EngineDiagnostic] = []
+        diagnostics: list[EngineDiagnostic] = [
+            EngineDiagnostic(
+                item.level,
+                "rule_deprecation",
+                {
+                    "code": item.code,
+                    "message": item.message,
+                    "rule_id": item.rule_id,
+                    "field_path": item.field_path,
+                },
+            )
+            for item in getattr(plan, "diagnostics", ())
+        ]
         rule_profile = {} if self._profile_rules else None
 
         gated_rules = self._gated_rules(plan)
@@ -449,6 +462,7 @@ class TriggerEngine:
         all_events = self._policy_engine.apply(
             single_events_tuple + temporal_events, all_rules
         )
+        all_events = self._with_evaluation_mode(all_events, context)
 
         stats = EngineStats(
             input_frames=len(context.input_frames),
@@ -458,11 +472,18 @@ class TriggerEngine:
             events_emitted=len(all_events),
         )
         if rule_profile is not None:
+            profile_order = {
+                rule.rule_id: index
+                for index, rule in enumerate(plan.single_frame_rules + plan.temporal_rules)
+            }
             diagnostics.extend(
                 EngineDiagnostic("info", "rule_profile", profile)
                 for profile in sorted(
                     rule_profile.values(),
-                    key=lambda item: (-float(item.get("seconds", 0.0)), str(item.get("rule_id", ""))),
+                    key=lambda item: (
+                        profile_order.get(str(item.get("rule_id", "")), len(profile_order)),
+                        str(item.get("rule_id", "")),
+                    ),
                 )
             )
 
@@ -474,6 +495,29 @@ class TriggerEngine:
             stats=stats,
             diagnostics=tuple(diagnostics),
         )
+
+    def evaluate_offline_scene(self, bundle: ScenarioBundle) -> EngineResult:
+        from trigger_engine.alignment.scenario_alignment import ScenarioAlignment
+
+        context = ScenarioAlignment().align_full_scene(bundle)
+        return self.evaluate(context)
+
+    def _with_evaluation_mode(
+        self,
+        events: tuple[TagEvent, ...],
+        context: AlignmentContext,
+    ) -> tuple[TagEvent, ...]:
+        from dataclasses import replace
+
+        mode = getattr(context, "evaluation_mode", "causal_watermark")
+        if mode == "causal_watermark":
+            return events
+        updated = []
+        for event in events:
+            metadata = dict(event.metadata)
+            metadata["evaluation_mode"] = mode
+            updated.append(replace(event, metadata=metadata))
+        return tuple(updated)
 
     def _gated_rules(self, plan) -> tuple[GatedRule, ...]:
         rule_by_tag = {

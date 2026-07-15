@@ -31,6 +31,24 @@ rules:
 """
 
 
+EPISODE_WITH_COOLDOWN_RULE_YAML = """
+rules:
+  - id: sdc_hard_braking
+    subject: sdc_pair
+    when:
+      all:
+        - operator: predicate.agent_pair_always_true
+    emit:
+      tag: sdc_hard_braking
+      intent: review
+      policy:
+        cooldown_frames: 20
+        episode:
+          by: subject
+          mode: interval
+"""
+
+
 BAD_SUPPORTING_EPISODE_YAML = EPISODE_RULE_YAML.replace(
     "intent: review",
     "intent: supporting",
@@ -56,6 +74,21 @@ def review_event(frame_index, support):
             "supporting_frame_indices": tuple(support),
             "supporting_timestamps_seconds": tuple(i * 0.1 for i in support),
         },
+    )
+
+
+def hard_brake_event(frame_index):
+    return TagEvent(
+        scenario_id="scenario-review-episode",
+        source="unit",
+        frame_index=frame_index,
+        timestamp_seconds=frame_index * 0.1,
+        tag_name="sdc_hard_braking",
+        subject_type="sdc_pair",
+        subject_id="ego:target",
+        value=True,
+        rule_id="sdc_hard_braking",
+        metadata={"intent": "review"},
     )
 
 
@@ -100,6 +133,27 @@ class ReviewEpisodeContractTests(unittest.TestCase):
         self.assertEqual(first["raw_event_frame_indices"], (2, 3, 4))
         self.assertEqual(first["supporting_frame_indices"], (0, 1, 2, 3, 4))
         self.assertEqual(first["supporting_timestamps_seconds"], (0.0, 0.1, 0.2, 0.3, 0.4))
+
+    def test_episode_policy_uses_cooldown_as_sparse_review_gap(self):
+        from trigger_engine.engine.event_policy import EventPolicyEngine
+        from trigger_engine.rules.parser import RuleParser
+
+        rules = RuleParser().parse_yaml(EPISODE_WITH_COOLDOWN_RULE_YAML).rules
+        merged = EventPolicyEngine().apply(
+            (
+                hard_brake_event(4),
+                hard_brake_event(8),
+                hard_brake_event(9),
+                hard_brake_event(28),
+                hard_brake_event(36),
+            ),
+            rules,
+        )
+
+        self.assertEqual([event.frame_index for event in merged], [4])
+        episode = merged[0].metadata["episode"]
+        self.assertEqual(episode["raw_event_frame_indices"], (4, 8, 9, 28, 36))
+        self.assertEqual(episode["max_gap_frames"], 20)
 
     def test_classic_low_ttc_uses_supporting_then_review_episode(self):
         from trigger_engine.rules.parser import RuleParser

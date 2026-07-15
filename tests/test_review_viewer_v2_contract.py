@@ -505,6 +505,16 @@ class ReviewViewerV2ContractTests(unittest.TestCase):
 
         self.assertIn("agent.object_type === 'pedestrian'", html)
         self.assertIn("agent.object_type === 'cyclist'", html)
+
+    def test_rendered_viewer_preserves_string_track_ids(self):
+        from tools.export_viewer import build_viewer_payload, render_viewer_html
+
+        payload = build_viewer_payload(make_context_with_future_and_map(), make_mixed_result())
+        html = render_viewer_html(payload)
+
+        self.assertIn("function normalizeTrackId", html)
+        self.assertNotIn("event.subject_id.split(':').map(Number)", html)
+        self.assertNotIn("const id = Number(trackId)", html)
         self.assertIn("agentLabel", html)
         self.assertIn("function eventViewRadius", html)
         self.assertIn("event.tag_name === 'vru_close_interaction') return 22", html)

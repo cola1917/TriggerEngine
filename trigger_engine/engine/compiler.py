@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from trigger_engine.operators.registry import OperatorRegistry, OperatorRegistryError
 from trigger_engine.rules.ast import (
     AllCondition,
+    RuleDiagnostic,
     Rule,
     RuleSet,
     SequenceTagCondition,
@@ -22,6 +23,7 @@ class ExecutionPlan:
     single_frame_rules: tuple[Rule, ...]
     temporal_rules: tuple[Rule, ...]
     operator_names: tuple[str, ...]
+    diagnostics: tuple[RuleDiagnostic, ...] = ()
 
 
 _SDC_COMPATIBLE = {"sdc_agent": "agent", "sdc_pair": "agent_pair"}
@@ -87,6 +89,7 @@ class RuleCompiler:
             single_frame_rules=tuple(single_frame_rules),
             temporal_rules=tuple(temporal_rules),
             operator_names=tuple(sorted(operator_names_set)),
+            diagnostics=rule_set.diagnostics,
         )
 
     def _validate_sustained_rule(

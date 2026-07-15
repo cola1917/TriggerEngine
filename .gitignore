@@ -152,7 +152,8 @@ ehthumbs.db
 Thumbs.db
 
 # Data files
-data/
+/data/
+/outputs/
 viewer.html
 viewer_*.html
 view_v2*.html

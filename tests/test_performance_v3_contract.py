@@ -284,6 +284,99 @@ rules:
             1,
         )
 
+    def test_lane_change_conflict_pair_generation_skips_when_sdc_lateral_motion_too_small(self):
+        from trigger_engine.engine.subjects import SubjectCache
+        from trigger_engine.operators.builtins import register_builtin_operators
+        from trigger_engine.operators.registry import OperatorRegistry
+        from trigger_engine.rules.engine import RuleEngine
+        from trigger_engine.rules.parser import RuleParser
+
+        counter = CountingPairOperator()
+        registry = OperatorRegistry()
+        register_builtin_operators(registry)
+        registry.register(counter)
+        rule_set = RuleParser().parse_yaml(
+            """
+rules:
+  - id: moving_lane_change_conflict_candidates
+    kind: single_frame
+    subject: sdc_pair
+    when:
+      all:
+        - operator: predicate.count_pair
+        - operator: predicate.sdc_lane_change_conflict
+          args:
+            window_seconds: 3.0
+            max_front_longitudinal_m: 25.0
+            max_behind_longitudinal_m: 20.0
+            max_lateral_m: 3.0
+            min_lateral_displacement_m: 1.5
+            min_target_speed_mps: 1.0
+    emit:
+      tag: moving_lane_change_conflict_candidates
+"""
+        )
+        past_agents = (
+            type(agent(0, 0.0, 0.0))(**{**agent(0, 0.0, 0.0).__dict__, "velocity_x": 6.0}),
+            type(agent(1, 10.0, 0.0))(**{**agent(1, 10.0, 0.0).__dict__, "velocity_x": 3.0}),
+        )
+        current_agents = (
+            type(agent(0, 3.0, 0.2))(**{**agent(0, 3.0, 0.2).__dict__, "velocity_x": 6.0, "timestamp_seconds": 1.0}),
+            type(agent(1, 12.0, 0.0))(**{**agent(1, 12.0, 0.0).__dict__, "velocity_x": 3.0, "timestamp_seconds": 1.0}),
+        )
+        past_frame = AlignedFrame(
+            frame=Frame(
+                scenario_id="scenario-lane-change-conflict-gate",
+                step_index=0,
+                timestamp_seconds=0.0,
+                phase="history",
+                agent_states=past_agents,
+                traffic_lights=(),
+            ),
+            visibility="observed",
+            available_modalities=frozenset({"agents", "valid_agents"}),
+        )
+        current_frame = AlignedFrame(
+            frame=Frame(
+                scenario_id="scenario-lane-change-conflict-gate",
+                step_index=10,
+                timestamp_seconds=1.0,
+                phase="current",
+                agent_states=current_agents,
+                traffic_lights=(),
+            ),
+            visibility="current",
+            available_modalities=frozenset({"agents", "valid_agents"}),
+        )
+        context = AlignmentContext(
+            scenario_id="scenario-lane-change-conflict-gate",
+            watermark=Watermark("scenario-lane-change-conflict-gate", 10, 1.0),
+            observed_frames=(past_frame,),
+            current_frame=current_frame,
+            future_frames=(),
+            input_frames=(past_frame, current_frame),
+            source="unit",
+            sdc_track_index=0,
+            sdc_track_id=0,
+        )
+        cache = SubjectCache()
+
+        RuleEngine(registry).evaluate(rule_set, context, subject_cache=cache)
+
+        self.assertEqual(counter.calls, [])
+        self.assertEqual(
+            cache.rule_candidate_count("moving_lane_change_conflict_candidates", "sdc_pair", 10),
+            0,
+        )
+        self.assertEqual(
+            cache.rule_pair_scan_count("moving_lane_change_conflict_candidates", "sdc_pair", 10),
+            0,
+        )
+        self.assertEqual(
+            cache.rule_geometry_mode("moving_lane_change_conflict_candidates", "sdc_pair", 10),
+            "sdc_motion_gate",
+        )
+
     def test_classic_expensive_lane_review_rules_only_run_on_current_frame(self):
         from trigger_engine.rules.parser import RuleParser
         from trigger_engine.scenarios.classic import CLASSIC_SCENARIO_RULES_YAML

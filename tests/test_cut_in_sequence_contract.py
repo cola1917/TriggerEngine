@@ -183,7 +183,8 @@ class CutInSequenceContractTests(unittest.TestCase):
         self.assertIn("cut_in_confirmed", CLASSIC_SCENARIO_RULES_YAML)
         self.assertIn("cut_in_risk", CLASSIC_SCENARIO_RULES_YAML)
         self.assertIn("sequence:", CLASSIC_SCENARIO_RULES_YAML)
-        self.assertIn("within_frames:", CLASSIC_SCENARIO_RULES_YAML)
+        self.assertIn("within_seconds:", CLASSIC_SCENARIO_RULES_YAML)
+        self.assertNotIn("within_frames:", CLASSIC_SCENARIO_RULES_YAML)
 
     def test_classic_cut_in_lateral_approach_is_spatially_bounded(self):
         from trigger_engine.rules.parser import RuleParser

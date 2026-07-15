@@ -204,6 +204,30 @@ rules:
             3.0,
         )
 
+    def test_rule_engine_skips_frames_missing_required_modalities(self):
+        from trigger_engine.rules.engine import RuleEngine
+        from trigger_engine.rules.parser import RuleParser
+
+        rule_set = RuleParser().parse_yaml(
+            """
+rules:
+  - id: needs_traffic_lights
+    subject: agent
+    required_modalities: [traffic_lights]
+    when:
+      all:
+        - operator: predicate.type_is
+          args:
+            object_type: vehicle
+    emit:
+      tag: should_not_emit
+"""
+        )
+
+        events = RuleEngine(self.build_registry()).evaluate(rule_set, make_context())
+
+        self.assertEqual(events, ())
+
     def test_rule_engine_uses_only_alignment_input_frames(self):
         from trigger_engine.rules.engine import RuleEngine
         from trigger_engine.rules.parser import RuleParser

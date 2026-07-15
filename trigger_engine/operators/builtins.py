@@ -260,17 +260,18 @@ class LowTtcOperator:
             )
         threshold_s = args["threshold_s"]
         max_lat = args.get("max_lateral_m", 4.0)
+        max_long = args.get("max_longitudinal_m")
         min_closing = args.get("min_closing_speed_mps", 0.1)
 
         dx = subject.other.center.x - subject.ego.center.x
         dy = subject.other.center.y - subject.ego.center.y
         lon, lat = _rotate(dx, dy, subject.ego.heading)
 
-        if abs(lat) > max_lat:
+        if abs(lat) > max_lat or (max_long is not None and lon > max_long):
             return OperatorResult(
                 self.name, "agent_pair", subject.subject_id,
                 frame.frame.step_index, frame.frame.timestamp_seconds,
-                False, {"ttc_s": float("inf"), "lateral_m": lat},
+                False, {"ttc_s": float("inf"), "longitudinal_m": lon, "lateral_m": lat},
             )
 
         dvx = subject.ego.velocity_x - subject.other.velocity_x
@@ -764,12 +765,22 @@ def _agent_low_speed_frames_over_window(context, frame, track_id: int, window_se
     if not frames:
         return None
     low_speed_count = sum(1 for _, _, _, is_low in frames if is_low)
+    low_speed_timestamps = [
+        aligned_frame.frame.timestamp_seconds
+        for aligned_frame, _, _, is_low in frames
+        if is_low
+    ]
+    low_speed_duration = 0.0
+    if len(low_speed_timestamps) >= 2:
+        low_speed_duration = low_speed_timestamps[-1] - low_speed_timestamps[0]
     return {
         "observed_frame_count": len(frames),
         "low_speed_frame_count": low_speed_count,
+        "low_speed_duration_seconds": low_speed_duration,
         "window_seconds": frames[-1][0].frame.timestamp_seconds - frames[0][0].frame.timestamp_seconds,
         "max_observed_speed_mps": max(speed for _, _, speed, _ in frames),
         "matched_frame_indices": [aligned_frame.frame.step_index for aligned_frame, _, _, _ in frames],
+        "matched_timestamps_seconds": [aligned_frame.frame.timestamp_seconds for aligned_frame, _, _, _ in frames],
     }
 
 
@@ -866,8 +877,14 @@ class SdcBlockedUnableToProceedOperator:
                     "min_recent_ego_motion_mps": min_recent_motion,
                 },
             )
+        min_stopped_duration = args.get("min_stopped_duration_seconds")
         min_stopped_frames = args.get("min_stopped_frames", 6)
-        if stop_window["low_speed_frame_count"] < min_stopped_frames:
+        stopped_long_enough = (
+            stop_window["low_speed_duration_seconds"] >= min_stopped_duration
+            if min_stopped_duration is not None
+            else stop_window["low_speed_frame_count"] >= min_stopped_frames
+        )
+        if not stopped_long_enough:
             return OperatorResult(
                 self.name, "agent_pair", subject.subject_id,
                 frame.frame.step_index, frame.frame.timestamp_seconds,
@@ -878,6 +895,8 @@ class SdcBlockedUnableToProceedOperator:
                     "blocker_speed_mps": blocker_speed,
                     "longitudinal_m": lon,
                     "lateral_m": lat,
+                    "min_stopped_duration_seconds": min_stopped_duration,
+                    "min_stopped_frames": min_stopped_frames,
                 },
             )
 
@@ -1054,6 +1073,15 @@ def _heading_delta(a: float, b: float) -> float:
 def _agent_heading_change_after(context, frame, track_id: int, horizon_seconds: float) -> float | None:
     if context is None:
         return None
+    cache = getattr(context, "future_heading_change_cache", None)
+    key = (
+        track_id,
+        frame.frame.step_index,
+        frame.frame.timestamp_seconds,
+        horizon_seconds,
+    )
+    if cache is not None and key in cache:
+        return cache[key]
     start = None
     end = None
     start_time = frame.frame.timestamp_seconds
@@ -1071,9 +1099,10 @@ def _agent_heading_change_after(context, frame, track_id: int, horizon_seconds: 
         if start is None:
             start = agent.heading
         end = agent.heading
-    if start is None or end is None:
-        return None
-    return _heading_delta(start, end)
+    result = None if start is None or end is None else _heading_delta(start, end)
+    if cache is not None:
+        cache[key] = result
+    return result
 
 
 def _future_heading_change_exceeds(context, frame, track_id: int, args, *, prefix: str = ""):
@@ -1618,6 +1647,7 @@ class SdcRepeatedLaneChangeOperator:
         max_lateral = args["max_lateral_m"]
         max_heading = args["max_heading_delta_rad"]
         min_speed = args.get("min_speed_mps", 0.0)
+        min_stable_duration = args.get("min_stable_duration_seconds")
         min_stable_frames = args.get("min_stable_frames", 2)
         min_lateral_displacement = args.get("min_lateral_displacement_m", 0.0)
 
@@ -1676,7 +1706,12 @@ class SdcRepeatedLaneChangeOperator:
         for i in range(1, len(matched) + 1):
             if i == len(matched) or matched[i][2] != matched[run_start][2]:
                 run = matched[run_start:i]
-                if len(run) >= min_stable_frames:
+                if min_stable_duration is not None:
+                    run_duration = run[-1][1] - run[0][1] if len(run) >= 2 else 0.0
+                    is_stable = run_duration + 1e-9 >= min_stable_duration
+                else:
+                    is_stable = len(run) >= min_stable_frames
+                if is_stable:
                     stable_runs.append(run)
                 run_start = i
 
@@ -1748,6 +1783,7 @@ class SdcRepeatedLaneChangeOperator:
                 "stable_lane_sequence": stable_lane_sequence,
                 "topological_lane_sequence": topological_lane_sequence,
                 "lane_change_count": lane_change_count,
+                "min_stable_duration_seconds": min_stable_duration,
                 "min_stable_frames": min_stable_frames,
                 "lateral_displacement_m": lateral_displacement,
                 "matched_frame_indices": [m[0] for m in matched],

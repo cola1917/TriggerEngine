@@ -33,3 +33,7 @@ class AlignmentContext:
     lane_match_index_cache: dict[tuple, object] = field(default_factory=dict, compare=False, hash=False)
     red_light_lane_cache: dict[tuple, object] = field(default_factory=dict, compare=False, hash=False)
     lane_heading_change_cache: dict[tuple, object] = field(default_factory=dict, compare=False, hash=False)
+    future_heading_change_cache: dict[tuple, object] = field(default_factory=dict, compare=False, hash=False)
+    available_capabilities: frozenset[str] = field(default_factory=frozenset)
+    data_source_metadata: object | None = None
+    evaluation_mode: str = "causal_watermark"

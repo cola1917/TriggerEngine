@@ -31,6 +31,13 @@ class PairCandidatePredicate:
             max_lat = float(self.args.get("max_lateral_m", 2.5))
             max_long = float(self.args.get("max_front_longitudinal_m", 12.0))
             return math.sqrt(max_lat * max_lat + max_long * max_long)
+        if self.operator_name == "predicate.low_ttc":
+            max_long = self.args.get("max_longitudinal_m")
+            if max_long is None:
+                return None
+            max_lat = float(self.args.get("max_lateral_m", 4.0))
+            max_long = float(max_long)
+            return math.sqrt(max_lat * max_lat + max_long * max_long)
         if self.operator_name == "predicate.sdc_lane_change_conflict":
             max_lat = float(self.args.get("max_lateral_m", 3.0))
             max_long = max(
@@ -69,13 +76,16 @@ class PairCandidatePredicate:
                 and lon >= float(self.args.get("min_longitudinal_m", 0.0))
             )
         if self.operator_name == "predicate.low_ttc":
+            max_long = self.args.get("max_longitudinal_m")
             dvx = ego.velocity_x - other.velocity_x
             dvy = ego.velocity_y - other.velocity_y
             closing_speed, _ = _rotate(dvx, dvy, ego.heading)
             return (
                 lat_abs <= float(self.args.get("max_lateral_m", 4.0))
                 and lon > 0.0
+                and (max_long is None or lon <= float(max_long))
                 and closing_speed >= float(self.args.get("min_closing_speed_mps", 0.1))
+                and lon / closing_speed < float(self.args["threshold_s"])
             )
         if self.operator_name == "predicate.pair_ego_hard_braking":
             return (
@@ -142,6 +152,8 @@ class PairGeometryCache:
         self._agents = agents
         self._xs = np.array([agent.center.x for agent in agents], dtype=float)
         self._ys = np.array([agent.center.y for agent in agents], dtype=float)
+        self._vxs = np.array([agent.velocity_x for agent in agents], dtype=float)
+        self._vys = np.array([agent.velocity_y for agent in agents], dtype=float)
         headings = np.array([agent.heading for agent in agents], dtype=float)
         self._cos = np.cos(headings)
         self._sin = np.sin(headings)
@@ -180,6 +192,13 @@ class PairGeometryCache:
             elif predicate.operator_name == "predicate.low_ttc":
                 mask &= lat_abs <= float(args.get("max_lateral_m", 4.0))
                 mask &= lon > 0.0
+                if args.get("max_longitudinal_m") is not None:
+                    mask &= lon <= float(args["max_longitudinal_m"])
+                dvx = self._vxs[:, None] - self._vxs[None, :]
+                dvy = self._vys[:, None] - self._vys[None, :]
+                closing_speed = dvx * self._cos[:, None] + dvy * self._sin[:, None]
+                mask &= closing_speed >= float(args.get("min_closing_speed_mps", 0.1))
+                mask &= lon < closing_speed * float(args["threshold_s"])
             elif predicate.operator_name == "predicate.pair_ego_hard_braking":
                 mask &= lon >= 0.0
                 mask &= lon <= float(args.get("max_front_longitudinal_m", 40.0))
@@ -218,6 +237,7 @@ class SubjectCache:
     def __init__(self) -> None:
         self._cache: dict[tuple[str, int, str], list] = {}
         self._rule_cache: dict[tuple[str, str, int, str], list] = {}
+        self._plan_cache: dict[int, PairCandidatePlan] = {}
         self._build_counts: dict[tuple[str, int, str], int] = {}
         self._rule_build_counts: dict[tuple[str, str, int, str], int] = {}
         self._rule_candidate_counts: dict[tuple[str, str, int, str], int] = {}
@@ -255,7 +275,7 @@ class SubjectCache:
 
         pair_mode = rule.pair.mode
 
-        plan = build_pair_candidate_plan(rule)
+        plan = self._plan_for_rule(rule)
         if not plan.can_prune:
             if rule.subject_type == "sdc_pair" and context is not None:
                 subjects = self._build_subjects(
@@ -282,6 +302,24 @@ class SubjectCache:
                 aligned_frame,
                 getattr(context, "sdc_track_id", None),
                 _pair_ego_hard_braking_args(plan),
+            )
+        ):
+            self._rule_cache[key] = []
+            self._rule_build_counts[key] = self._rule_build_counts.get(key, 0) + 1
+            self._rule_candidate_counts[key] = 0
+            self._rule_pair_scan_counts[key] = 0
+            self._rule_geometry_modes[key] = "sdc_motion_gate"
+            return []
+
+        if (
+            rule.subject_type == "sdc_pair"
+            and context is not None
+            and _has_sdc_lane_change_conflict_predicate(plan)
+            and not _sdc_lateral_motion_gate_passes(
+                context,
+                aligned_frame,
+                getattr(context, "sdc_track_id", None),
+                _sdc_lane_change_conflict_args(plan),
             )
         ):
             self._rule_cache[key] = []
@@ -490,7 +528,7 @@ class SubjectCache:
     ) -> list:
         from trigger_engine.operators.builtins import AgentPairSubject
 
-        plan = build_pair_candidate_plan(rule)
+        plan = self._plan_for_rule(rule)
         agents = [a for a in aligned_frame.frame.agent_states if a.valid]
         agents_by_id = {str(agent.track_id): agent for agent in agents}
         order = {str(agent.track_id): index for index, agent in enumerate(agents)}
@@ -523,6 +561,24 @@ class SubjectCache:
         if subject_type in ("agent_pair", "sdc_pair"):
             return subject.subject_id
         return None
+
+    def _plan_for_rule(self, rule: Rule) -> PairCandidatePlan:
+        key = id(rule)
+        if key not in self._plan_cache:
+            self._plan_cache[key] = build_pair_candidate_plan(rule)
+        return self._plan_cache[key]
+
+    def rule_candidate_count_for_frame(self, rule_id: str, subject_type: str, aligned_frame) -> int:
+        return self._rule_candidate_counts.get(
+            self._rule_key(aligned_frame, rule_id, subject_type),
+            0,
+        )
+
+    def rule_pair_scan_count_for_frame(self, rule_id: str, subject_type: str, aligned_frame) -> int:
+        return self._rule_pair_scan_counts.get(
+            self._rule_key(aligned_frame, rule_id, subject_type),
+            0,
+        )
 
     @staticmethod
     def _key(aligned_frame, subject_type: str) -> tuple[str, int, str]:
@@ -597,6 +653,20 @@ def _pair_ego_hard_braking_args(plan: PairCandidatePlan) -> dict[str, object]:
     return {}
 
 
+def _has_sdc_lane_change_conflict_predicate(plan: PairCandidatePlan) -> bool:
+    return any(
+        predicate.operator_name == "predicate.sdc_lane_change_conflict"
+        for predicate in plan.predicates
+    )
+
+
+def _sdc_lane_change_conflict_args(plan: PairCandidatePlan) -> dict[str, object]:
+    for predicate in plan.predicates:
+        if predicate.operator_name == "predicate.sdc_lane_change_conflict":
+            return predicate.args
+    return {}
+
+
 def _sdc_hard_braking_gate_passes(
     context,
     aligned_frame,
@@ -652,6 +722,48 @@ def _sdc_hard_braking_gate_passes(
         and speed_drop >= float(args.get("min_speed_drop_mps", 0.0))
         and start_speed >= float(args.get("min_start_speed_mps", 0.0))
     )
+
+
+def _sdc_lateral_motion_gate_passes(
+    context,
+    aligned_frame,
+    sdc_track_id: int | None,
+    args: dict[str, object],
+) -> bool:
+    if sdc_track_id is None:
+        return True
+
+    window_seconds = float(args.get("window_seconds", 3.0))
+    min_lateral_displacement = float(args.get("min_lateral_displacement_m", 0.0))
+    start_time = aligned_frame.frame.timestamp_seconds - window_seconds
+    first_agent = None
+    lateral_values = []
+    for frame in context.input_frames:
+        ts = frame.frame.timestamp_seconds
+        if ts < start_time or ts > aligned_frame.frame.timestamp_seconds:
+            continue
+        candidate = next(
+            (
+                agent
+                for agent in frame.frame.agent_states
+                if agent.track_id == sdc_track_id and agent.valid
+            ),
+            None,
+        )
+        if candidate is None:
+            continue
+        if first_agent is None:
+            first_agent = candidate
+            lateral_values.append(0.0)
+            continue
+        dx = candidate.center.x - first_agent.center.x
+        dy = candidate.center.y - first_agent.center.y
+        _, lateral = _rotate(dx, dy, first_agent.heading)
+        lateral_values.append(lateral)
+
+    if not lateral_values:
+        return False
+    return max(lateral_values) - min(lateral_values) >= min_lateral_displacement
 
 
 def _canonicalize_unordered_pairs(pairs: list) -> list:

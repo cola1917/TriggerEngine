@@ -4,7 +4,7 @@ from tests.test_rule_compiler_contract import registry_with_vehicle_ops
 from tests.test_rule_dsl_temporal_contract import RULE_YAML
 
 from trigger_engine.alignment.context import AlignedFrame, AlignmentContext, Watermark
-from trigger_engine.data.frames import AgentState, Frame, Point3D
+from trigger_engine.data.frames import AgentState, Frame, Point3D, ScenarioBundle
 
 
 def agent(track_id, speed):
@@ -52,6 +52,32 @@ def make_context():
         future_frames=(future,),
         input_frames=(f0, f1, f2),
         source="file-001",
+    )
+
+
+def make_offline_bundle():
+    frames = tuple(
+        Frame(
+            scenario_id="scenario-offline",
+            step_index=step,
+            timestamp_seconds=step * 0.1,
+            phase="current" if step == 1 else ("history" if step < 1 else "future"),
+            agent_states=(agent(100, 0.1),),
+            traffic_lights=(),
+        )
+        for step in range(4)
+    )
+    return ScenarioBundle(
+        scenario_id="scenario-offline",
+        timestamps_seconds=tuple(step * 0.1 for step in range(4)),
+        current_time_index=1,
+        sdc_track_index=100,
+        objects_of_interest=(),
+        prediction_targets=(),
+        frames=frames,
+        map_features={},
+        source="offline-source",
+        has_lidar_data=False,
     )
 
 
@@ -149,6 +175,29 @@ class TriggerEngineContractTests(unittest.TestCase):
         self.assertEqual(result.events[-1].metadata["supporting_frame_indices"], (0, 1, 2))
         self.assertEqual(result.events[0].metadata["rule_kind"], "single_frame")
 
+    def test_trigger_engine_offline_scene_evaluates_the_full_timeline_once(self):
+        engine = self.build_engine()
+
+        result = engine.evaluate_offline_scene(make_offline_bundle())
+
+        self.assertEqual(result.scenario_id, "scenario-offline")
+        self.assertEqual(result.source, "offline-source")
+        self.assertIn(3, [event.frame_index for event in result.events])
+        self.assertEqual(
+            [(event.tag_name, event.frame_index) for event in result.events],
+            [
+                ("vehicle_stopped", 0),
+                ("vehicle_stopped", 1),
+                ("vehicle_stopped", 2),
+                ("vehicle_stopped", 3),
+                ("vehicle_stopped_for_3_frames", 2),
+                ("vehicle_stopped_for_3_frames", 3),
+            ],
+        )
+        self.assertTrue(
+            all(event.metadata["evaluation_mode"] == "offline_full_scene" for event in result.events)
+        )
+
     def test_trigger_engine_stats_and_future_boundary(self):
         engine = self.build_engine()
 
@@ -190,6 +239,49 @@ class TriggerEngineContractTests(unittest.TestCase):
         self.assertGreaterEqual(profiles[0]["seconds"], 0.0)
         self.assertEqual(profiles[1]["rule_kind"], "temporal")
         self.assertEqual(profiles[1]["events_emitted"], 1)
+
+    def test_trigger_engine_emits_rule_deprecation_diagnostics_from_plan(self):
+        from trigger_engine.engine.registry import RuleRegistry
+        from trigger_engine.engine.trigger_engine import TriggerEngine
+
+        yaml_text = """
+rules:
+  - id: vehicle_stopped
+    subject: agent
+    when:
+      all:
+        - operator: predicate.type_is
+          args:
+            object_type: vehicle
+    emit:
+      tag: vehicle_stopped
+  - id: vehicle_stopped_for_3_frames
+    kind: temporal
+    subject: agent
+    when:
+      tag: vehicle_stopped
+      sustained:
+        frames: 3
+    emit:
+      tag: vehicle_stopped_for_3_frames
+"""
+        operators = runtime_registry()
+        rules = RuleRegistry(operator_registry=operators)
+        rules.register_yaml("deprecated", yaml_text)
+        rules.activate("deprecated")
+
+        result = TriggerEngine(operators, rules).evaluate(make_context())
+
+        deprecations = [
+            diagnostic for diagnostic in result.diagnostics
+            if diagnostic.message == "rule_deprecation"
+        ]
+        self.assertEqual(len(deprecations), 1)
+        self.assertEqual(deprecations[0].level, "warning")
+        self.assertEqual(
+            deprecations[0].metadata["field_path"],
+            "rules[1].when.sustained.frames",
+        )
 
 
 if __name__ == "__main__":

@@ -171,6 +171,35 @@ class WaymoAdapterContractTests(unittest.TestCase):
         self.assertEqual(bundle.map_features[12].properties["lane_ids"], (7,))
         self.assertEqual(bundle.map_features[13].feature_type, "driveway")
 
+    def test_adapter_can_skip_visual_map_features_for_rule_only_runs(self):
+        from trigger_engine.data.adapters import WaymoScenarioAdapter
+
+        scenario = make_fake_scenario()
+        scenario.map_features = (
+            scenario.map_features[0],
+            make_map_feature(
+                8,
+                "road_line",
+                SimpleNamespace(type=2, polyline=(point(0.0, 0.0), point(1.0, 0.0))),
+            ),
+            make_map_feature(
+                9,
+                "crosswalk",
+                SimpleNamespace(polygon=(point(0.0, 0.0), point(1.0, 0.0), point(1.0, 1.0))),
+            ),
+            make_map_feature(
+                10,
+                "stop_sign",
+                SimpleNamespace(position=point(5.0, 5.0), lane=(7,)),
+            ),
+        )
+
+        bundle = WaymoScenarioAdapter(include_visual_map_features=False).from_proto(scenario)
+
+        self.assertEqual(set(bundle.map_features), {7, 10})
+        self.assertEqual(bundle.map_features[7].feature_type, "lane")
+        self.assertEqual(bundle.map_features[10].feature_type, "stop_sign")
+
     def test_adapter_rejects_dynamic_map_state_length_mismatch(self):
         from trigger_engine.data.adapters import DataAdapterError, WaymoScenarioAdapter
 

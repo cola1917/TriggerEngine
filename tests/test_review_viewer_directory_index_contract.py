@@ -97,13 +97,54 @@ class ReviewViewerDirectoryIndexContractTests(unittest.TestCase):
         self.assertEqual(index["stats"]["payload_files"], 3)
         self.assertEqual(index["stats"]["review_files"], 2)
         self.assertEqual(index["stats"]["review_events"], 3)
+        self.assertIn("review", index["tag_groups_by_level"])
+        self.assertIn("primary", index["tag_groups_by_level"])
+        self.assertIn("supporting", index["tag_groups_by_level"])
         self.assertEqual(
             [item["file"] for item in index["files"]],
             ["a_cut_in.json", "c_low_ttc.json"],
         )
         self.assertEqual(index["files"][0]["review_tag_counts"], {"cut_in_risk": 1})
+        self.assertEqual(index["files"][0]["review_tag_summaries"]["cut_in_risk"]["count"], 1)
         self.assertEqual(index["files"][0]["first_review_frame_index"], 8)
         self.assertEqual(index["files"][1]["review_tags"], ["persistent_low_ttc_pair", "sdc_repeated_lane_change"])
+        self.assertEqual(
+            [group["tag_name"] for group in index["tag_groups"]],
+            ["cut_in_risk", "persistent_low_ttc_pair", "sdc_repeated_lane_change"],
+        )
+        self.assertEqual(
+            [group["tag_name"] for group in index["tag_groups_by_level"]["primary"]],
+            ["cut_in_risk", "persistent_low_ttc_pair", "sdc_repeated_lane_change"],
+        )
+        self.assertEqual(index["tag_groups"][1]["files"][0]["scenario_id"], "low-ttc")
+
+    def test_index_builds_tag_groups_for_review_levels(self):
+        from tools.export_viewer import build_review_payload_index
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            payload = make_payload(
+                "mixed",
+                [
+                    event("sdc_hard_braking", 8, "review"),
+                    event("red_light_stop_line_approach", 7, "supporting"),
+                    event("vehicle_stopped", 6, "debug"),
+                ],
+                review_indices=[0],
+            )
+            payload["event_groups"] = {"primary": [0], "supporting": [1], "debug": [2]}
+            (root / "mixed.json").write_text(json.dumps(payload), encoding="utf-8")
+
+            index = build_review_payload_index(root)
+
+        self.assertEqual(index["tag_groups_by_level"]["review"][0]["tag_name"], "sdc_hard_braking")
+        self.assertEqual(index["tag_groups_by_level"]["primary"][0]["tag_name"], "sdc_hard_braking")
+        self.assertEqual(index["tag_groups_by_level"]["supporting"][0]["tag_name"], "red_light_stop_line_approach")
+        self.assertEqual(index["tag_groups_by_level"]["debug"][0]["tag_name"], "vehicle_stopped")
+        self.assertEqual(
+            [group["tag_name"] for group in index["tag_groups_by_level"]["all"]],
+            ["red_light_stop_line_approach", "sdc_hard_braking", "vehicle_stopped"],
+        )
 
     def test_index_can_use_review_events_when_indices_are_absent(self):
         from tools.export_viewer import build_review_payload_index
@@ -134,6 +175,13 @@ class ReviewViewerDirectoryIndexContractTests(unittest.TestCase):
                     "scenario_id": "scenario-35",
                     "review_event_count": 1,
                     "review_tag_counts": {"cut_in_risk": 1},
+                    "review_tag_summaries": {
+                        "cut_in_risk": {
+                            "count": 1,
+                            "first_frame_index": 8,
+                            "first_timestamp_seconds": 0.8,
+                        }
+                    },
                     "review_tags": ["cut_in_risk"],
                     "first_review_frame_index": 8,
                     "first_review_timestamp_seconds": 0.8,
@@ -147,12 +195,19 @@ class ReviewViewerDirectoryIndexContractTests(unittest.TestCase):
         html = render_review_index_html(index)
 
         self.assertIn('id="reviewFileIndex"', html)
-        self.assertIn('id="reviewFileList"', html)
+        self.assertIn('id="reviewTagList"', html)
+        self.assertIn('id="reviewLevelFilter"', html)
+        self.assertNotIn('id="reviewTagFilter"', html)
         self.assertIn('id="viewerFrame"', html)
         self.assertIn("review_payload_00035.json", html)
         self.assertIn("review_viewers/review_payload_00035.html", html)
         self.assertIn("cut_in_risk", html)
-        self.assertIn(".row.selected", html)
+        self.assertIn('"tag_name": "cut_in_risk"', html)
+        self.assertIn("${escapeHtml(group.tag_name || 'unknown')} (${group.count || 0})", html)
+        self.assertIn(".scene-row.selected", html)
+        self.assertIn("renderReviewTagGroups", html)
+        self.assertIn("reviewLevelFilter.addEventListener", html)
+        self.assertNotIn("reviewTagFilter.addEventListener", html)
         self.assertIn("classList.toggle('selected'", html)
 
     def test_render_review_index_from_payload_dir_writes_index_and_review_viewers(self):

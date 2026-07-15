@@ -2,6 +2,15 @@ from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
+class RuleDiagnostic:
+    level: str
+    code: str
+    message: str
+    rule_id: str
+    field_path: str
+
+
+@dataclass(frozen=True)
 class OperatorCall:
     operator_name: str
     args: dict[str, object] = field(default_factory=dict)
@@ -84,8 +93,10 @@ class Rule:
     description: str | None = None
     window: RuleWindow | None = None
     pair: PairConfig = field(default_factory=PairConfig)
+    required_modalities: frozenset[str] = field(default_factory=frozenset)
 
 
 @dataclass(frozen=True)
 class RuleSet:
     rules: tuple[Rule, ...]
+    diagnostics: tuple[RuleDiagnostic, ...] = ()

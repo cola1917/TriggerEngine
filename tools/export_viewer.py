@@ -259,6 +259,23 @@ def summarize_events(events: list) -> dict[str, object]:
     }
 
 
+def group_review_events_by_tag(events: list, review_event_indices: list[int]) -> list[dict[str, object]]:
+    groups: list[dict[str, object]] = []
+    by_tag: dict[str, dict[str, object]] = {}
+    for index in review_event_indices:
+        if index < 0 or index >= len(events):
+            continue
+        tag = event_tag(events[index])
+        group = by_tag.get(tag)
+        if group is None:
+            group = {"tag_name": tag, "event_indices": [], "count": 0}
+            by_tag[tag] = group
+            groups.append(group)
+        group["event_indices"].append(index)
+        group["count"] += 1
+    return groups
+
+
 def _compute_agent_bounds(frames, margin: float) -> dict[str, float]:
     xs, ys = [], []
     for frame in frames:
@@ -285,10 +302,19 @@ def _compute_agent_bounds(frames, margin: float) -> dict[str, float]:
 
 
 def _feature_intersects_bounds(feature, bounds: dict[str, float]) -> bool:
-    for point in list(feature.polyline) + list(feature.polygon):
-        if bounds["min_x"] <= point.x <= bounds["max_x"] and bounds["min_y"] <= point.y <= bounds["max_y"]:
-            return True
-    return False
+    points = list(feature.polyline) + list(feature.polygon)
+    if not points:
+        return False
+    min_x = min(point.x for point in points)
+    max_x = max(point.x for point in points)
+    min_y = min(point.y for point in points)
+    max_y = max(point.y for point in points)
+    return not (
+        max_x < bounds["min_x"]
+        or min_x > bounds["max_x"]
+        or max_y < bounds["min_y"]
+        or min_y > bounds["max_y"]
+    )
 
 
 def _extract_subject_ids(event) -> set[str]:
@@ -346,6 +372,7 @@ def build_viewer_payload(
     review_event_indices = [i for i, e in enumerate(events_list) if classify_event_group(e) == "primary"]
     review_event_indices.sort(key=lambda i: 0 if (events_list[i].subject_type if hasattr(events_list[i], 'subject_type') else events_list[i].get('subject_type', '')) == 'agent_pair' else 1)
     review_events = [events_list[i] for i in review_event_indices]
+    review_event_groups_by_tag = group_review_events_by_tag(events_list, review_event_indices)
     event_groups = {"primary": [], "supporting": [], "debug": []}
     for i, event in enumerate(events_list):
         event_groups[classify_event_group(event)].append(i)
@@ -388,6 +415,7 @@ def build_viewer_payload(
         "events": [event_to_dict(event) for event in events_list],
         "review_events": [event_to_dict(event) for event in review_events],
         "review_event_indices": review_event_indices,
+        "review_event_groups_by_tag": review_event_groups_by_tag,
         "event_groups": event_groups,
         "map_features": [map_feature_to_dict(feature) for feature in map_features],
         "view": {
@@ -499,6 +527,9 @@ def render_viewer_html(payload: dict[str, object]) -> str:
       border-left: 1px solid var(--line);
       padding: 12px;
       font-size: 12px;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
     }}
     .summary-panel h2 {{
       font-size: 13px;
@@ -523,9 +554,48 @@ def render_viewer_html(payload: dict[str, object]) -> str:
       white-space: nowrap;
     }}
     .event-list {{
-      margin-top: 12px;
       overflow: auto;
-      max-height: 260px;
+      max-height: 340px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+    }}
+    .sidebar-events {{
+      margin-top: 12px;
+      min-height: 0;
+    }}
+    .sidebar-events .meta {{
+      margin: 0 0 6px;
+    }}
+    .event-tag-group {{
+      border-bottom: 1px solid var(--line);
+      background: var(--panel);
+    }}
+    .event-tag-group summary {{
+      cursor: pointer;
+      padding: 8px 12px;
+      font-weight: 650;
+      color: var(--text);
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      list-style: none;
+    }}
+    .event-tag-group summary::-webkit-details-marker {{
+      display: none;
+    }}
+    .event-tag-group summary::before {{
+      content: '+';
+      color: var(--accent);
+      font-weight: 700;
+      margin-right: 6px;
+    }}
+    .event-tag-group[open] summary::before {{
+      content: '-';
+    }}
+    .event-tag-count {{
+      color: var(--muted);
+      font-weight: 600;
+      white-space: nowrap;
     }}
     .event {{
       padding: 9px 12px;
@@ -547,6 +617,9 @@ def render_viewer_html(payload: dict[str, object]) -> str:
     .event-sub {{
       color: var(--muted);
       margin-top: 3px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }}
     pre {{
       margin: 0;
@@ -586,6 +659,10 @@ def render_viewer_html(payload: dict[str, object]) -> str:
           <summary>Raw JSON</summary>
           <pre id="rawEventJson"></pre>
         </details>
+        <div class="sidebar-events">
+          <div class="meta" id="eventCount"></div>
+          <div class="event-list" id="eventList"></div>
+        </div>
       </div>
     </div>
     <div class="controls">
@@ -602,8 +679,6 @@ def render_viewer_html(payload: dict[str, object]) -> str:
         <option value="all">All</option>
       </select>
     </div>
-    <div class="meta" id="eventCount"></div>
-    <div class="event-list" id="eventList"></div>
     <div id="sequenceTimeline" style="display:none">
       <h2>Sequence Timeline</h2>
       <div id="timelineContent"></div>
@@ -649,10 +724,16 @@ def render_viewer_html(payload: dict[str, object]) -> str:
       return event && (event.subject_type === 'agent_pair' || event.subject_type === 'sdc_pair');
     }}
 
+    function normalizeTrackId(value) {{
+      if (value === null || value === undefined || value === '') return null;
+      const numberValue = Number(value);
+      return Number.isFinite(numberValue) && String(numberValue) === String(value) ? numberValue : String(value);
+    }}
+
     function pairRoleIds(event) {{
       if (!isPairEvent(event) || typeof event.subject_id !== 'string') return null;
       const parts = event.subject_id.split(':');
-      return {{egoId: Number(parts[0]), targetId: Number(parts[1])}};
+      return {{egoId: normalizeTrackId(parts[0]), targetId: normalizeTrackId(parts[1])}};
     }}
 
     function egoIdForEvent(event) {{
@@ -660,9 +741,10 @@ def render_viewer_html(payload: dict[str, object]) -> str:
       const ids = pairRoleIds(event);
       if (ids) return ids.egoId;
       const meta = event.metadata || {{}};
-      if (Number.isFinite(Number(meta.ego_id))) return Number(meta.ego_id);
+      const metaEgoId = normalizeTrackId(meta.ego_id);
+      if (metaEgoId !== null) return metaEgoId;
       if (event.subject_type === 'sdc_agent' || event.subject_type === 'agent') {{
-        if (Number.isFinite(Number(event.subject_id))) return Number(event.subject_id);
+        return normalizeTrackId(event.subject_id);
       }}
       return null;
     }}
@@ -682,6 +764,21 @@ def render_viewer_html(payload: dict[str, object]) -> str:
     function agentLabel(agent) {{
       if (!agent) return 'n/a';
       return `${{agent.track_id}} (${{agent.object_type || 'unknown'}})`;
+    }}
+
+    function shortTrackId(value) {{
+      const text = String(value ?? '');
+      if (text.length <= 12) return text;
+      return `${{text.slice(0, 8)}}...${{text.slice(-4)}}`;
+    }}
+
+    function eventSubjectLabel(event) {{
+      if (!event) return '';
+      if (isPairEvent(event) && typeof event.subject_id === 'string') {{
+        const ids = pairRoleIds(event);
+        if (ids) return `${{shortTrackId(ids.egoId)}} -> ${{shortTrackId(ids.targetId)}}`;
+      }}
+      return shortTrackId(event.subject_id ?? '');
     }}
 
     function roleForAgent(event, trackId) {{
@@ -755,7 +852,8 @@ def render_viewer_html(payload: dict[str, object]) -> str:
         summaryEgo.textContent = agentLabel((frame.agents || []).find(a => a.track_id === ids.egoId));
         summaryTarget.textContent = agentLabel((frame.agents || []).find(a => a.track_id === ids.targetId));
       }} else {{
-        summaryEgo.textContent = agentLabel((frame.agents || []).find(a => a.track_id === Number(event.subject_id)));
+        const subjectId = normalizeTrackId(event.subject_id);
+        summaryEgo.textContent = agentLabel((frame.agents || []).find(a => a.track_id === subjectId));
         summaryTarget.textContent = 'n/a';
       }}
       rawEventJson.textContent = JSON.stringify(event, null, 2);
@@ -807,7 +905,7 @@ def render_viewer_html(payload: dict[str, object]) -> str:
     function subjectIds(event) {{
       if (!event) return new Set();
       if (isPairEvent(event) && typeof event.subject_id === 'string') {{
-        return new Set(event.subject_id.split(':').map(Number));
+        return new Set(event.subject_id.split(':').map(normalizeTrackId).filter(id => id !== null));
       }}
       const egoId = egoIdForEvent(event);
       if (egoId !== null) return new Set([egoId]);
@@ -912,6 +1010,17 @@ def render_viewer_html(payload: dict[str, object]) -> str:
     }}
 
     function featureIntersectsBounds(feature, b) {{
+      function bboxIntersects(points, bounds) {{
+        if (!points.length) return false;
+        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+        for (const p of points) {{
+          minX = Math.min(minX, p.x);
+          maxX = Math.max(maxX, p.x);
+          minY = Math.min(minY, p.y);
+          maxY = Math.max(maxY, p.y);
+        }}
+        return !(maxX < bounds.minX || minX > bounds.maxX || maxY < bounds.minY || minY > bounds.maxY);
+      }}
       if (activeTransform) {{
         const radius = activeTransform.radius || 40;
         const margin = 10;
@@ -920,14 +1029,14 @@ def render_viewer_html(payload: dict[str, object]) -> str:
           minY: -(radius + margin), maxY: radius + margin,
         }};
         const points = [...(feature.polyline || []), ...(feature.polygon || [])];
-        return points.some(p => {{
+        const localPoints = points.map(p => {{
           const local = worldToEventLocal(p, activeTransform);
-          return local.x >= localBounds.minX && local.x <= localBounds.maxX &&
-                 local.y >= localBounds.minY && local.y <= localBounds.maxY;
+          return {{x: local.x, y: local.y}};
         }});
+        return bboxIntersects(localPoints, localBounds);
       }}
       const points = [...(feature.polyline || []), ...(feature.polygon || [])];
-      return points.some(p => p.x >= b.minX && p.x <= b.maxX && p.y >= b.minY && p.y <= b.maxY);
+      return bboxIntersects(points, {{minX: b.minX, maxX: b.maxX, minY: b.minY, maxY: b.maxY}});
     }}
 
     function drawMap() {{
@@ -1037,10 +1146,13 @@ def render_viewer_html(payload: dict[str, object]) -> str:
       }}
       ctx.restore();
 
-      ctx.fillStyle = role === 'TARGET' ? '#78350f' : selected ? '#064e3b' : '#334155';
-      ctx.font = role ? 'bold 12px system-ui' : '11px system-ui';
-      const typeHint = agent.object_type === 'pedestrian' ? 'P' : (agent.object_type === 'cyclist' ? 'C' : '');
-      ctx.fillText(typeHint ? `${{agent.track_id}}/${{typeHint}}` : String(agent.track_id), p.x + 4, p.y - 4);
+      if (selected || role) {{
+        ctx.fillStyle = role === 'TARGET' ? '#78350f' : selected ? '#064e3b' : '#334155';
+        ctx.font = role ? 'bold 12px system-ui' : '11px system-ui';
+        const typeHint = agent.object_type === 'pedestrian' ? 'P' : (agent.object_type === 'cyclist' ? 'C' : '');
+        const label = role || typeHint || String(agent.track_id);
+        ctx.fillText(label, p.x + 4, p.y - 4);
+      }}
     }}
 
     function drawPairLine(frame, ids) {{
@@ -1114,9 +1226,21 @@ def render_viewer_html(payload: dict[str, object]) -> str:
       }});
       if (feature.polygon?.length) ctx.closePath();
       const isLane = feature.feature_type === 'lane';
-      ctx.strokeStyle = isLane ? '#b8c2d0' : '#ccd3de';
-      ctx.lineWidth = isLane ? 3 : 2;
-      ctx.globalAlpha = 0.5;
+      if (feature.polygon?.length) {{
+        if (feature.feature_type === 'drivable_area') {{
+          ctx.fillStyle = 'rgba(226,232,240,0.38)';
+          ctx.fill();
+        }} else if (feature.feature_type === 'road_segment') {{
+          ctx.fillStyle = 'rgba(241,245,249,0.42)';
+          ctx.fill();
+        }} else if (isLane) {{
+          ctx.fillStyle = 'rgba(219,234,254,0.16)';
+          ctx.fill();
+        }}
+      }}
+      ctx.strokeStyle = isLane ? '#94a3b8' : (feature.feature_type.includes('divider') ? '#9ca3af' : '#cbd5e1');
+      ctx.lineWidth = isLane ? 2.5 : (feature.feature_type.includes('divider') ? 1.5 : 1.2);
+      ctx.globalAlpha = isLane ? 0.7 : 0.48;
       ctx.stroke();
       if (isLane && points.length >= 2) {{
         ctx.strokeStyle = '#d5dbe5';
@@ -1128,7 +1252,7 @@ def render_viewer_html(payload: dict[str, object]) -> str:
     }}
 
     function drawAgentTrajectory(trackId) {{
-      const id = Number(trackId);
+      const id = normalizeTrackId(trackId);
       const supports = supportingFrames(selectedEvent());
       for (let fi = 0; fi < payload.frames.length; fi++) {{
         const f = payload.frames[fi];
@@ -1314,15 +1438,60 @@ def render_viewer_html(payload: dict[str, object]) -> str:
       slider.value = String(frameIndex);
     }}
 
+    function groupEventItemsByTag(items) {{
+      const groups = [];
+      const byTag = new Map();
+      for (const [event, index] of items) {{
+        const tagName = event.tag_name || 'unknown';
+        if (!byTag.has(tagName)) {{
+          const group = {{ tagName, eventIndices: [] }};
+          byTag.set(tagName, group);
+          groups.push(group);
+        }}
+        byTag.get(tagName).eventIndices.push(index);
+      }}
+      return groups;
+    }}
+
+    function reviewGroupsForCurrentFilter(items) {{
+      const selectedTag = tagSelect.value;
+      if (currentEventGroup !== 'review' || selectedTag) return groupEventItemsByTag(items);
+      return (payload.review_event_groups_by_tag || [])
+        .map((group) => ({{
+          tagName: group.tag_name || 'unknown',
+          eventIndices: (group.event_indices || []).filter((index) => payload.events[index])
+        }}))
+        .filter((group) => group.eventIndices.length > 0);
+    }}
+
+    function eventItemHtml(event, index) {{
+      return `
+        <div class="event ${{index === selectedEventIndex ? 'active' : ''}}" data-index="${{index}}">
+          <div class="event-title"><span>${{event.tag_name}}</span><span>f${{event.frame_index}}</span></div>
+          <div class="event-sub" title="${{event.subject_id ?? ''}}">${{event.subject_type}} ${{eventSubjectLabel(event)}} | ${{event.timestamp_seconds.toFixed(2)}}s</div>
+        </div>
+      `;
+    }}
+
+    function renderEventGroups(items) {{
+      const groups = reviewGroupsForCurrentFilter(items);
+      return groups.map((group, groupIndex) => {{
+        const isActiveGroup = group.eventIndices.includes(selectedEventIndex);
+        const openAttr = isActiveGroup || groupIndex === 0 ? ' open' : '';
+        const eventsHtml = group.eventIndices.map((index) => eventItemHtml(payload.events[index], index)).join('');
+        return `
+          <details class="event-tag-group"${{openAttr}}>
+            <summary><span>${{group.tagName}} (${{group.eventIndices.length}})</span><span class="event-tag-count">events</span></summary>
+            ${{eventsHtml}}
+          </details>
+        `;
+      }}).join('');
+    }}
+
     function renderEvents() {{
       const items = filteredEvents();
       eventCount.textContent = `${{items.length}} shown / ${{payload.events.length}} total`;
-      eventList.innerHTML = items.map(([event, index]) => `
-        <div class="event ${{index === selectedEventIndex ? 'active' : ''}}" data-index="${{index}}">
-          <div class="event-title"><span>${{event.tag_name}}</span><span>f${{event.frame_index}}</span></div>
-          <div class="event-sub">${{event.subject_type}} ${{event.subject_id ?? ''}} | ${{event.timestamp_seconds.toFixed(2)}}s</div>
-        </div>
-      `).join('');
+      eventList.innerHTML = renderEventGroups(items);
       for (const node of eventList.querySelectorAll('.event')) {{
         node.addEventListener('click', () => {{
           selectedEventIndex = Number(node.dataset.index);
@@ -1477,9 +1646,19 @@ def build_review_payload_index(payload_dir: Path) -> dict:
             re_list = review_events
 
         tag_counts: dict[str, int] = {}
+        tag_summaries: dict[str, dict[str, object]] = {}
         for ev in re_list:
             tag = ev.get("tag_name", "")
             tag_counts[tag] = tag_counts.get(tag, 0) + 1
+            summary = tag_summaries.setdefault(
+                tag,
+                {
+                    "count": 0,
+                    "first_frame_index": ev.get("frame_index"),
+                    "first_timestamp_seconds": ev.get("timestamp_seconds"),
+                },
+            )
+            summary["count"] += 1
 
         first_frame = re_list[0].get("frame_index") if re_list else None
         first_ts = re_list[0].get("timestamp_seconds") if re_list else None
@@ -1492,6 +1671,8 @@ def build_review_payload_index(payload_dir: Path) -> dict:
             "source": data.get("source", ""),
             "review_event_count": len(re_list),
             "review_tag_counts": tag_counts,
+            "review_tag_summaries": tag_summaries,
+            "tag_summaries_by_level": _tag_summaries_by_level(data, events, re_list),
             "review_tags": sorted(tag_counts.keys()),
             "first_review_frame_index": first_frame,
             "first_review_timestamp_seconds": first_ts,
@@ -1499,7 +1680,7 @@ def build_review_payload_index(payload_dir: Path) -> dict:
         })
         total_review_events += len(re_list)
 
-    return {
+    index = {
         "payload_dir": str(payload_dir),
         "files": review_files,
         "stats": {
@@ -1509,22 +1690,97 @@ def build_review_payload_index(payload_dir: Path) -> dict:
         },
         "diagnostics": diagnostics,
     }
+    index["tag_groups"] = build_review_tag_groups(index)
+    index["tag_groups_by_level"] = build_review_tag_groups_by_level(index)
+    return index
+
+
+def _tag_summaries_by_level(data: dict, events: list, review_events: list) -> dict[str, dict[str, dict[str, object]]]:
+    groups = data.get("event_groups") or {}
+    event_lists = {
+        "review": review_events,
+        "primary": [events[i] for i in groups.get("primary", []) if i < len(events)],
+        "supporting": [events[i] for i in groups.get("supporting", []) if i < len(events)],
+        "debug": [events[i] for i in groups.get("debug", []) if i < len(events)],
+        "all": list(events),
+    }
+    if not event_lists["primary"]:
+        event_lists["primary"] = review_events
+
+    result = {}
+    for level, level_events in event_lists.items():
+        summaries: dict[str, dict[str, object]] = {}
+        for event in level_events:
+            tag = event.get("tag_name", "")
+            summary = summaries.setdefault(
+                tag,
+                {
+                    "count": 0,
+                    "first_frame_index": event.get("frame_index"),
+                    "first_timestamp_seconds": event.get("timestamp_seconds"),
+                },
+            )
+            summary["count"] += 1
+        result[level] = summaries
+    return result
+
+
+def build_review_tag_groups(index: dict, *, level: str = "review") -> list[dict[str, object]]:
+    by_tag: dict[str, dict[str, object]] = {}
+    for file_index, entry in enumerate(index.get("files", [])):
+        summaries_by_level = entry.get("tag_summaries_by_level") or {}
+        tag_summaries = summaries_by_level.get(level) or (
+            entry.get("review_tag_summaries") if level == "review" else {}
+        ) or {}
+        for tag_name, summary in tag_summaries.items():
+            count = int(summary.get("count", 0))
+            if count <= 0:
+                continue
+            group = by_tag.setdefault(
+                tag_name,
+                {"tag_name": tag_name, "count": 0, "files": []},
+            )
+            group["count"] += count
+            group["files"].append(
+                {
+                    "file_index": file_index,
+                    "file": entry.get("file", ""),
+                    "viewer_path": entry.get("viewer_path", ""),
+                    "scenario_id": entry.get("scenario_id", ""),
+                    "source": entry.get("source", ""),
+                    "count": count,
+                    "first_frame_index": summary.get(
+                        "first_frame_index",
+                        entry.get("first_review_frame_index"),
+                    ),
+                    "first_timestamp_seconds": summary.get(
+                        "first_timestamp_seconds",
+                        entry.get("first_review_timestamp_seconds"),
+                    ),
+                    "review_event_count": entry.get("review_event_count", 0),
+                }
+            )
+    return sorted(
+        by_tag.values(),
+        key=lambda group: (-int(group.get("count", 0)), str(group.get("tag_name", ""))),
+    )
+
+
+def build_review_tag_groups_by_level(index: dict) -> dict[str, list[dict[str, object]]]:
+    return {
+        level: build_review_tag_groups(index, level=level)
+        for level in ("review", "primary", "supporting", "debug", "all")
+    }
 
 
 def render_review_index_html(index: dict) -> str:
     stats = index.get("stats", {})
     files = index.get("files", [])
+    tag_groups = index.get("tag_groups") or build_review_tag_groups(index)
+    index = dict(index)
+    index["tag_groups"] = tag_groups
+    index["tag_groups_by_level"] = index.get("tag_groups_by_level") or build_review_tag_groups_by_level(index)
     index_json = json.dumps(index, ensure_ascii=False).replace("</", "<\\/")
-    rows = ""
-    for i, f in enumerate(files):
-        tags = ", ".join(f.get("review_tags", []))
-        rows += (
-            f'<div class="row" data-file="{f["file"]}" onclick="selectFile({i})">'
-            f'<div class="name">{f["file"]}</div>'
-            f'<div class="meta">{f.get("scenario_id", "")}</div>'
-            f'<div class="meta">{tags} | {f.get("review_event_count", 0)} events</div>'
-            f'</div>\n'
-        )
     first_viewer = files[0]["viewer_path"] if files else ""
     return f"""<!doctype html>
 <html lang="en">
@@ -1532,32 +1788,95 @@ def render_review_index_html(index: dict) -> str:
   <meta charset="utf-8">
   <title>Review Index</title>
   <style>
-    body {{ margin: 0; font: 13px/1.4 system-ui, sans-serif; display: flex; height: 100vh; }}
-    #reviewFileList {{ width: 340px; overflow: auto; border-right: 1px solid #d8dde6; background: #fff; }}
-    .header {{ padding: 12px; border-bottom: 1px solid #d8dde6; font-weight: 650; }}
-    .row {{ padding: 8px 12px; border-bottom: 1px solid #eee; cursor: pointer; border-left: 3px solid transparent; }}
-    .row:hover {{ background: #f0fdfa; }}
-    .row.selected {{ background: #dff8f0; border-left-color: #0f766e; }}
-    .row .name {{ font-weight: 600; }}
-    .row .meta {{ color: #64748b; font-size: 11px; margin-top: 2px; }}
+    body {{ margin: 0; font: 13px/1.4 system-ui, sans-serif; display: flex; height: 100vh; color: #0f172a; }}
     #viewerFrame {{ flex: 1; border: none; }}
+    #reviewTagList {{ width: 380px; overflow: auto; border-left: 1px solid #d8dde6; background: #fff; }}
+    .header {{ padding: 12px; border-bottom: 1px solid #d8dde6; font-weight: 650; }}
+    .filter-bar {{ padding: 10px 12px; border-bottom: 1px solid #e5e7eb; }}
+    .filter-bar label {{ display: block; color: #64748b; font-size: 11px; margin-bottom: 4px; }}
+    .filter-bar select {{ width: 100%; min-height: 30px; border: 1px solid #cbd5e1; background: #fff; color: #0f172a; }}
+    .tag-group {{ border-bottom: 1px solid #e5e7eb; }}
+    .tag-group summary {{ cursor: pointer; display: flex; gap: 8px; align-items: center; justify-content: space-between; padding: 10px 12px; font-weight: 650; list-style: none; }}
+    .tag-group summary::-webkit-details-marker {{ display: none; }}
+    .tag-group summary::before {{ content: '+'; color: #64748b; margin-right: 2px; }}
+    .tag-group[open] summary::before {{ content: '-'; }}
+    .tag-count {{ color: #64748b; font-size: 11px; font-weight: 500; }}
+    .scene-row {{ display: block; width: 100%; text-align: left; padding: 8px 12px 8px 28px; border: 0; border-top: 1px solid #f1f5f9; background: #fff; cursor: pointer; border-left: 3px solid transparent; }}
+    .scene-row:hover {{ background: #f0fdfa; }}
+    .scene-row.selected {{ background: #dff8f0; border-left-color: #0f766e; }}
+    .scene-name {{ display: block; font-weight: 600; color: #0f172a; }}
+    .scene-meta {{ display: block; color: #64748b; font-size: 11px; margin-top: 2px; overflow-wrap: anywhere; }}
   </style>
 </head>
 <body>
-  <div id="reviewFileList">
-    <div class="header">Review Files ({stats.get("review_files", 0)} / {stats.get("payload_files", 0)}) | {stats.get("review_events", 0)} events</div>
-    {rows}
-  </div>
   <iframe id="viewerFrame" src="{first_viewer}"></iframe>
+  <div id="reviewTagList">
+    <div class="header">Review Tags ({len(tag_groups)}) | {stats.get("review_events", 0)} events</div>
+    <div class="filter-bar">
+      <label for="reviewLevelFilter">Review level</label>
+      <select id="reviewLevelFilter">
+        <option value="review">Review</option>
+        <option value="primary">Primary</option>
+        <option value="supporting">Supporting</option>
+        <option value="debug">Debug</option>
+        <option value="all">All</option>
+      </select>
+    </div>
+    <div id="reviewTagGroups"></div>
+  </div>
   <script id="reviewFileIndex" type="application/json">{index_json}</script>
   <script>
-    function selectFile(i) {{
-      const files = JSON.parse(document.getElementById('reviewFileIndex').textContent).files;
-      document.getElementById('viewerFrame').src = files[i].viewer_path;
-      document.querySelectorAll('#reviewFileList .row').forEach((row, index) => {{
-        row.classList.toggle('selected', index === i);
+    const reviewIndex = JSON.parse(document.getElementById('reviewFileIndex').textContent);
+    const reviewLevelFilter = document.getElementById('reviewLevelFilter');
+    const reviewTagGroups = document.getElementById('reviewTagGroups');
+    const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (ch) => ({{
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;',
+    }}[ch]));
+
+    function renderReviewTagGroups() {{
+      const selectedLevel = reviewLevelFilter.value || 'review';
+      const groups = (reviewIndex.tag_groups_by_level || {{}})[selectedLevel] || [];
+      reviewTagGroups.innerHTML = groups.map((group, index) => {{
+        const openAttr = index === 0 ? ' open' : '';
+        const rows = (group.files || []).map((item) => {{
+          const frame = item.first_frame_index;
+          const frameText = frame === null || frame === undefined ? 'frame n/a' : `f${{frame}}`;
+          return `
+            <button class="scene-row" data-file-index="${{item.file_index}}" onclick="selectFile(${{item.file_index}})">
+              <span class="scene-name">${{escapeHtml(item.scenario_id || '')}}</span>
+              <span class="scene-meta">${{escapeHtml(item.file || '')}}</span>
+              <span class="scene-meta">${{item.count || 0}} events | ${{escapeHtml(frameText)}}</span>
+            </button>`;
+        }}).join('');
+        return `
+          <details class="tag-group"${{openAttr}}>
+            <summary><span>${{escapeHtml(group.tag_name || 'unknown')}} (${{group.count || 0}})</span><span class="tag-count">${{(group.files || []).length}} scenes</span></summary>
+            ${{rows}}
+          </details>`;
+      }}).join('');
+      highlightSelectedFile();
+    }}
+
+    function highlightSelectedFile() {{
+      const frame = document.getElementById('viewerFrame');
+      const files = reviewIndex.files || [];
+      const selectedIndex = files.findIndex((file) => file.viewer_path === frame.getAttribute('src'));
+      document.querySelectorAll('#reviewTagList .scene-row').forEach((row) => {{
+        row.classList.toggle('selected', Number(row.dataset.fileIndex) === selectedIndex);
       }});
     }}
+
+    function selectFile(i) {{
+      const files = reviewIndex.files || [];
+      document.getElementById('viewerFrame').src = files[i].viewer_path;
+      highlightSelectedFile();
+    }}
+    renderReviewTagGroups();
+    reviewLevelFilter.addEventListener('change', renderReviewTagGroups);
     if ({len(files)} > 0) selectFile(0);
   </script>
 </body>
@@ -1580,6 +1899,8 @@ def render_review_index_from_payload_dir(
         viewer_path = viewer_dir / (payload_path.stem + ".html")
         render_viewer_from_payload(payload_path, viewer_path)
         entry["viewer_path"] = os.path.relpath(viewer_path, output.parent)
+    index["tag_groups"] = build_review_tag_groups(index)
+    index["tag_groups_by_level"] = build_review_tag_groups_by_level(index)
 
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(render_review_index_html(index), encoding="utf-8")

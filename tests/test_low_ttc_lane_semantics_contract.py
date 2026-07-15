@@ -122,6 +122,7 @@ class LowTtcLaneSemanticsContractTests(unittest.TestCase):
         )
         self.assertLessEqual(pair_in_front.args["max_lateral_m"], 2.0)
         self.assertLessEqual(low_ttc_call.args["max_lateral_m"], 2.0)
+        self.assertLessEqual(low_ttc_call.args["max_longitudinal_m"], 60.0)
 
 
 if __name__ == "__main__":

@@ -111,10 +111,12 @@ def _compact_events(events: tuple[TagEvent, ...], rules: tuple[Rule, ...]) -> tu
 
 def _episode_events(events: tuple[TagEvent, ...], rules: tuple[Rule, ...]) -> tuple[TagEvent, ...]:
     episode_rules: dict[tuple[str, str], str] = {}
+    cooldown_rules: dict[tuple[str, str], int] = {}
     for rule in rules:
         episode = rule.emit.policy.episode
         if episode is not None:
             episode_rules[(rule.emit.tag_name, rule.rule_id)] = episode.by
+            cooldown_rules[(rule.emit.tag_name, rule.rule_id)] = rule.emit.policy.cooldown_frames
 
     if not episode_rules:
         return events
@@ -164,6 +166,7 @@ def _episode_events(events: tuple[TagEvent, ...], rules: tuple[Rule, ...]) -> tu
             new_metadata["episode"] = {
                 "mode": "interval",
                 "by": episode_rules.get((pending.tag_name, pending.rule_id), "subject"),
+                "max_gap_frames": max(1, cooldown_rules.get((pending.tag_name, pending.rule_id), 0)),
                 "start_frame_index": pending.frame_index,
                 "end_frame_index": pending_indices[-1],
                 "start_timestamp_seconds": pending.timestamp_seconds,
@@ -195,7 +198,12 @@ def _episode_events(events: tuple[TagEvent, ...], rules: tuple[Rule, ...]) -> tu
             pending.subject_id,
         ) if pending is not None else None
 
-        if pending is not None and group_key == prev_key and event.frame_index == pending_indices[-1] + 1:
+        max_gap_frames = max(1, cooldown_rules.get((event.tag_name, event.rule_id), 0))
+        if (
+            pending is not None
+            and group_key == prev_key
+            and event.frame_index <= pending_indices[-1] + max_gap_frames
+        ):
             pending_indices.append(event.frame_index)
             pending_timestamps.append(event.timestamp_seconds)
             # Merge supporting frames
@@ -224,6 +232,43 @@ def _episode_events(events: tuple[TagEvent, ...], rules: tuple[Rule, ...]) -> tu
     all_result.sort(key=lambda e: (str(e.subject_id), e.frame_index, e.tag_name))
 
     return tuple(all_result)
+
+
+def _cooldown_events(events: tuple[TagEvent, ...], rules: tuple[Rule, ...]) -> tuple[TagEvent, ...]:
+    cooldown_by_tag: dict[str, int] = {}
+    for rule in rules:
+        cooldown = rule.emit.policy.cooldown_frames
+        if cooldown > 0:
+            cooldown_by_tag[rule.emit.tag_name] = cooldown
+
+    suppressed_until: dict[tuple, int] = {}
+    result: list[TagEvent] = []
+
+    for event in events:
+        key = (event.scenario_id, event.tag_name, event.subject_type, event.subject_id)
+        cooldown = cooldown_by_tag.get(event.tag_name, 0)
+
+        if cooldown <= 0:
+            result.append(event)
+            continue
+
+        last = suppressed_until.get(key, -1)
+        if event.frame_index <= last:
+            continue
+
+        new_metadata = dict(event.metadata)
+        new_metadata["policy"] = {
+            "cooldown_frames": cooldown,
+            "suppressed_until_frame_index": event.frame_index + cooldown,
+            "output_frame_index": event.frame_index,
+            "output_timestamp_seconds": event.timestamp_seconds,
+        }
+        kept = replace(event, metadata=new_metadata)
+        result.append(kept)
+
+        suppressed_until[key] = event.frame_index + cooldown
+
+    return tuple(result)
 
 
 def _review_dominance(events: tuple[TagEvent, ...]) -> tuple[TagEvent, ...]:
@@ -276,39 +321,7 @@ class EventPolicyEngine:
         events: tuple[TagEvent, ...],
         rules: tuple[Rule, ...],
     ) -> tuple[TagEvent, ...]:
-        cooldown_by_tag: dict[str, int] = {}
-        for rule in rules:
-            cooldown = rule.emit.policy.cooldown_frames
-            if cooldown > 0:
-                cooldown_by_tag[rule.emit.tag_name] = cooldown
-
-        suppressed_until: dict[tuple, int] = {}
-        result: list[TagEvent] = []
-
-        for event in events:
-            key = (event.scenario_id, event.tag_name, event.subject_type, event.subject_id)
-            cooldown = cooldown_by_tag.get(event.tag_name, 0)
-
-            if cooldown <= 0:
-                result.append(event)
-                continue
-
-            last = suppressed_until.get(key, -1)
-            if event.frame_index <= last:
-                continue
-
-            new_metadata = dict(event.metadata)
-            new_metadata["policy"] = {
-                "cooldown_frames": cooldown,
-                "suppressed_until_frame_index": event.frame_index + cooldown,
-                "output_frame_index": event.frame_index,
-                "output_timestamp_seconds": event.timestamp_seconds,
-            }
-            kept = replace(event, metadata=new_metadata)
-            result.append(kept)
-
-            suppressed_until[key] = event.frame_index + cooldown
-
-        compacted = _compact_events(tuple(result), rules)
+        compacted = _compact_events(events, rules)
         episoded = _episode_events(compacted, rules)
-        return _review_dominance(episoded)
+        cooled = _cooldown_events(episoded, rules)
+        return _review_dominance(cooled)

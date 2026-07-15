@@ -108,6 +108,69 @@ class ExportViewerContractTests(unittest.TestCase):
             payload["review_summary"]["event_counts_by_tag"],
             {"cut_in_confirmed": 1},
         )
+        self.assertEqual(
+            payload["review_event_groups_by_tag"],
+            [
+                {
+                    "tag_name": "cut_in_confirmed",
+                    "event_indices": [0],
+                    "count": 1,
+                }
+            ],
+        )
+
+    def test_review_event_groups_by_tag_preserve_review_priority_order(self):
+        from tools.export_viewer import build_viewer_payload
+
+        events = (
+            TagEvent("scenario-viewer", "unit", 1, 0.1, "cut_in_confirmed", "agent_pair", "1:2", True, "r1", {"intent": "review"}),
+            TagEvent("scenario-viewer", "unit", 2, 0.2, "sdc_hard_braking", "sdc_pair", "1:3", True, "r2", {"intent": "review"}),
+            TagEvent("scenario-viewer", "unit", 0, 0.0, "cut_in_confirmed", "agent_pair", "1:4", True, "r3", {"intent": "review"}),
+            TagEvent("scenario-viewer", "unit", 2, 0.2, "adjacent_vehicle", "agent_pair", "1:2", True, "r4", {"intent": "supporting"}),
+        )
+        result = EngineResult(
+            scenario_id="scenario-viewer",
+            source="unit",
+            plan_id="classic_v1",
+            events=events,
+            stats=EngineStats(3, 0, 1, 1, len(events)),
+            diagnostics=(),
+        )
+
+        payload = build_viewer_payload(make_context(), result)
+
+        self.assertEqual(payload["review_event_indices"], [0, 2, 1])
+        self.assertEqual(
+            payload["review_event_groups_by_tag"],
+            [
+                {"tag_name": "cut_in_confirmed", "event_indices": [0, 2], "count": 2},
+                {"tag_name": "sdc_hard_braking", "event_indices": [1], "count": 1},
+            ],
+        )
+
+    def test_map_crop_keeps_large_feature_covering_bounds(self):
+        from tools.export_viewer import _feature_intersects_bounds
+        from trigger_engine.data.frames import MapFeature, Point3D
+
+        feature = MapFeature(
+            feature_id=1,
+            feature_type="drivable_area",
+            polyline=(),
+            polygon=(
+                Point3D(-100.0, -100.0, 0.0),
+                Point3D(100.0, -100.0, 0.0),
+                Point3D(100.0, 100.0, 0.0),
+                Point3D(-100.0, 100.0, 0.0),
+            ),
+            properties={},
+        )
+
+        self.assertTrue(
+            _feature_intersects_bounds(
+                feature,
+                {"min_x": -5.0, "max_x": 5.0, "min_y": -5.0, "max_y": 5.0},
+            )
+        )
 
     def test_medium_vru_event_is_kept_but_not_default_review(self):
         from tools.export_viewer import build_viewer_payload
@@ -277,6 +340,18 @@ class ExportViewerContractTests(unittest.TestCase):
         self.assertIsNotNone(match)
         embedded = json.loads(match.group(1))
         self.assertEqual(embedded["events"][0]["tag_name"], "cut_in_confirmed")
+
+    def test_rendered_viewer_groups_review_events_by_tag_with_expandable_sections(self):
+        from tools.export_viewer import build_viewer_payload, render_viewer_html
+
+        payload = build_viewer_payload(make_context(), make_result())
+        html = render_viewer_html(payload)
+
+        self.assertIn("review_event_groups_by_tag", html)
+        self.assertIn("event-tag-group", html)
+        self.assertIn("<details", html)
+        self.assertIn("renderEventGroups", html)
+        self.assertIn("bboxIntersects", html)
 
     def test_render_viewer_from_payload_uses_payload_json_without_running_engine(self):
         from tools.export_viewer import (

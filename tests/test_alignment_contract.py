@@ -114,6 +114,27 @@ class AlignmentContractTests(unittest.TestCase):
         self.assertEqual(context.future_frames, ())
         self.assertEqual([item.frame.step_index for item in context.input_frames], [2])
 
+    def test_align_full_scene_marks_every_frame_as_current_input(self):
+        from trigger_engine.alignment.scenario_alignment import ScenarioAlignment
+
+        context = ScenarioAlignment().align_full_scene(make_bundle())
+
+        self.assertEqual(context.evaluation_mode, "offline_full_scene")
+        self.assertEqual(context.watermark.step_index, 4)
+        self.assertEqual(context.observed_frames, ())
+        self.assertEqual(context.future_frames, ())
+        self.assertEqual([item.frame.step_index for item in context.input_frames], [0, 1, 2, 3, 4])
+        self.assertEqual({item.visibility for item in context.input_frames}, {"current"})
+        self.assertEqual({item.frame.phase for item in context.input_frames}, {"current"})
+
+    def test_align_full_scene_resolves_sdc_from_any_valid_frame(self):
+        from trigger_engine.alignment.scenario_alignment import ScenarioAlignment
+
+        bundle = make_bundle(current_time_index=4)
+        context = ScenarioAlignment().align_full_scene(bundle)
+
+        self.assertEqual(context.sdc_track_id, 0)
+
     def test_aligned_frame_reports_available_modalities(self):
         from trigger_engine.alignment.scenario_alignment import ScenarioAlignment
 

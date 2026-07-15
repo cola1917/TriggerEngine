@@ -57,12 +57,20 @@ class RuleEngine:
                         allowed_subject_ids=allowed_subject_ids,
                     )
                     if rule.subject_type in ("agent_pair", "sdc_pair"):
-                        pair_candidate_count += subject_cache.rule_candidate_count(
-                            rule.rule_id, rule.subject_type, aligned_frame.frame.step_index
-                        )
-                        pair_scan_count += subject_cache.rule_pair_scan_count(
-                            rule.rule_id, rule.subject_type, aligned_frame.frame.step_index
-                        )
+                        if hasattr(subject_cache, "rule_candidate_count_for_frame"):
+                            pair_candidate_count += subject_cache.rule_candidate_count_for_frame(
+                                rule.rule_id, rule.subject_type, aligned_frame
+                            )
+                            pair_scan_count += subject_cache.rule_pair_scan_count_for_frame(
+                                rule.rule_id, rule.subject_type, aligned_frame
+                            )
+                        else:
+                            pair_candidate_count += subject_cache.rule_candidate_count(
+                                rule.rule_id, rule.subject_type, aligned_frame.frame.step_index
+                            )
+                            pair_scan_count += subject_cache.rule_pair_scan_count(
+                                rule.rule_id, rule.subject_type, aligned_frame.frame.step_index
+                            )
                 else:
                     subjects = self._get_subjects(rule.subject_type, aligned_frame, pair_mode)
                 subjects_considered += len(subjects)
@@ -261,6 +269,9 @@ class RuleEngine:
 
 
 def _rule_applies_to_frame(rule, aligned_frame) -> bool:
+    required_modalities = getattr(rule, "required_modalities", frozenset())
+    if required_modalities and not required_modalities.issubset(aligned_frame.available_modalities):
+        return False
     if not getattr(rule.condition, "calls", None):
         return True
     for call in rule.condition.calls:

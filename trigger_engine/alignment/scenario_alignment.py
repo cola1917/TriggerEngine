@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from trigger_engine.data.frames import ScenarioBundle
 
 from .context import AlignedFrame, AlignmentContext, Watermark
@@ -121,4 +123,57 @@ class ScenarioAlignment:
             map_features=bundle.map_features,
             sdc_track_index=sdc_track_index,
             sdc_track_id=sdc_track_id,
+            available_capabilities=bundle.available_capabilities,
+            data_source_metadata=bundle.metadata,
+        )
+
+    def align_full_scene(self, bundle: ScenarioBundle) -> AlignmentContext:
+        if not bundle.frames:
+            raise AlignmentError("bundle.frames must not be empty")
+
+        watermark_frame = bundle.frames[-1]
+        watermark = Watermark(
+            scenario_id=bundle.scenario_id,
+            step_index=watermark_frame.step_index,
+            timestamp_seconds=watermark_frame.timestamp_seconds,
+        )
+
+        input_frames = tuple(
+            AlignedFrame(
+                frame=replace(frame, phase="current"),
+                visibility="current",
+                available_modalities=_available_modalities(bundle, frame),
+            )
+            for frame in bundle.frames
+        )
+
+        sdc_track_index = bundle.sdc_track_index
+        sdc_track_id = None
+        if sdc_track_index is not None:
+            for frame in bundle.frames:
+                for agent in frame.agent_states:
+                    if agent.track_index == sdc_track_index and agent.valid:
+                        sdc_track_id = agent.track_id
+                        break
+                if sdc_track_id is not None:
+                    break
+            if sdc_track_id is None:
+                raise AlignmentError(
+                    f"sdc_track_index={sdc_track_index} not found in scene agents"
+                )
+
+        return AlignmentContext(
+            scenario_id=bundle.scenario_id,
+            watermark=watermark,
+            observed_frames=(),
+            current_frame=input_frames[-1],
+            future_frames=(),
+            input_frames=input_frames,
+            source=bundle.source,
+            map_features=bundle.map_features,
+            sdc_track_index=sdc_track_index,
+            sdc_track_id=sdc_track_id,
+            available_capabilities=bundle.available_capabilities,
+            data_source_metadata=bundle.metadata,
+            evaluation_mode="offline_full_scene",
         )
