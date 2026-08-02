@@ -29,6 +29,7 @@ class RuleEngine:
         profile: dict[str, dict[str, object]] | None = None,
     ) -> tuple[TagEvent, ...]:
         events: list[TagEvent] = []
+        has_lane_geometry = _has_lane_geometry(context)
 
         for rule in rule_set.rules:
             rule_started = time.perf_counter() if profile is not None else None
@@ -45,7 +46,9 @@ class RuleEngine:
             )
             pair_mode = rule.pair.mode
             for aligned_frame in context.input_frames:
-                if not _rule_applies_to_frame(rule, aligned_frame, context):
+                if not _rule_applies_to_frame(
+                    rule, aligned_frame, context, has_lane_geometry=has_lane_geometry,
+                ):
                     frames_skipped += 1
                     continue
                 frames_evaluated += 1
@@ -268,12 +271,20 @@ class RuleEngine:
         return None
 
 
-def _rule_applies_to_frame(rule, aligned_frame, context=None) -> bool:
+def _rule_applies_to_frame(
+    rule,
+    aligned_frame,
+    context=None,
+    *,
+    has_lane_geometry: bool | None = None,
+) -> bool:
     required_modalities = getattr(rule, "required_modalities", frozenset())
     available_modalities = set(aligned_frame.available_modalities)
     if aligned_frame.frame.traffic_lights:
         available_modalities.add("traffic_lights")
-    if _has_lane_geometry(context):
+    if has_lane_geometry is None:
+        has_lane_geometry = _has_lane_geometry(context)
+    if has_lane_geometry:
         available_modalities.add("lane_geometry")
     if required_modalities and not required_modalities.issubset(available_modalities):
         return False

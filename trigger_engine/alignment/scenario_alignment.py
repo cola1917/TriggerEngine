@@ -11,22 +11,32 @@ class AlignmentError(Exception):
     pass
 
 
-def _available_modalities(bundle: ScenarioBundle, frame) -> frozenset[str]:
-    modalities = set()
+def _static_modalities(bundle: ScenarioBundle) -> frozenset[str]:
+    if not bundle.map_features:
+        return frozenset()
+
+    modalities = {"map"}
+    lane_features = [
+        feature for feature in bundle.map_features.values()
+        if feature.feature_type == "lane"
+    ]
+    if lane_features and all(feature.polyline for feature in lane_features):
+        modalities.add("lane_geometry")
+    return frozenset(modalities)
+
+
+def _available_modalities(
+    bundle: ScenarioBundle,
+    frame,
+    static_modalities: frozenset[str],
+) -> frozenset[str]:
+    modalities = set(static_modalities)
     if frame.agent_states:
         modalities.add("agents")
     if any(agent.valid for agent in frame.agent_states):
         modalities.add("valid_agents")
     if frame.traffic_lights:
         modalities.add("traffic_lights")
-    if bundle.map_features:
-        modalities.add("map")
-        lane_features = [
-            feature for feature in bundle.map_features.values()
-            if feature.feature_type == "lane"
-        ]
-        if lane_features and all(feature.polyline for feature in lane_features):
-            modalities.add("lane_geometry")
     if bundle.has_lidar_data and frame.step_index <= bundle.current_time_index:
         modalities.add("lidar")
     return frozenset(modalities)
@@ -65,6 +75,7 @@ class ScenarioAlignment:
             step_index=current_time_index,
             timestamp_seconds=current_frame.timestamp_seconds,
         )
+        static_modalities = _static_modalities(bundle)
 
         # Build observed frames
         observed_start = 0
@@ -77,7 +88,7 @@ class ScenarioAlignment:
             af = AlignedFrame(
                 frame=f,
                 visibility="observed",
-                available_modalities=_available_modalities(bundle, f),
+                available_modalities=_available_modalities(bundle, f, static_modalities),
             )
             observed_frames.append(af)
 
@@ -85,7 +96,9 @@ class ScenarioAlignment:
         current_aligned = AlignedFrame(
             frame=current_frame,
             visibility="current",
-            available_modalities=_available_modalities(bundle, current_frame),
+            available_modalities=_available_modalities(
+                bundle, current_frame, static_modalities,
+            ),
         )
 
         # Build future frames
@@ -99,7 +112,7 @@ class ScenarioAlignment:
             af = AlignedFrame(
                 frame=f,
                 visibility="future",
-                available_modalities=_available_modalities(bundle, f),
+                available_modalities=_available_modalities(bundle, f, static_modalities),
             )
             future_frames.append(af)
 
@@ -143,12 +156,13 @@ class ScenarioAlignment:
             step_index=watermark_frame.step_index,
             timestamp_seconds=watermark_frame.timestamp_seconds,
         )
+        static_modalities = _static_modalities(bundle)
 
         input_frames = tuple(
             AlignedFrame(
                 frame=replace(frame, phase="current"),
                 visibility="current",
-                available_modalities=_available_modalities(bundle, frame),
+                available_modalities=_available_modalities(bundle, frame, static_modalities),
             )
             for frame in bundle.frames
         )

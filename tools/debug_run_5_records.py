@@ -15,8 +15,11 @@ from tools.run_review_batch import run_batch
 
 
 def _default_shards(limit: int) -> list[Path]:
-    data_dir = PROJECT_ROOT / "data"
-    return sorted(data_dir.glob("validation_interactive.tfrecord-*"))[:limit]
+    for data_dir in (PROJECT_ROOT / "data" / "waymo", PROJECT_ROOT / "data"):
+        shards = sorted(data_dir.glob("validation_interactive.tfrecord-*"))
+        if shards:
+            return shards[:limit]
+    return []
 
 
 def main(argv=None) -> int:
