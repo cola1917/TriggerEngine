@@ -251,6 +251,7 @@ rules:
   - id: sdc_vehicle_stopped_at_red
     kind: single_frame
     subject: sdc_agent
+    required_modalities: [traffic_lights]
     when:
       all:
         - operator: predicate.type_is
@@ -285,6 +286,7 @@ rules:
   - id: red_light_stop_line_approach
     kind: single_frame
     subject: sdc_agent
+    required_modalities: [traffic_lights, lane_geometry]
     when:
       all:
         - operator: predicate.type_is
@@ -303,6 +305,7 @@ rules:
   - id: red_light_stop_line_crossed
     kind: single_frame
     subject: sdc_agent
+    required_modalities: [traffic_lights, lane_geometry]
     when:
       all:
         - operator: predicate.type_is
@@ -328,6 +331,7 @@ rules:
   - id: red_light_running
     kind: single_frame
     subject: sdc_agent
+    required_modalities: [traffic_lights, lane_geometry]
     when:
       all:
         - operator: predicate.type_is
@@ -486,6 +490,7 @@ rules:
   - id: lane_change_conflict
     kind: single_frame
     subject: sdc_pair
+    required_modalities: [lane_geometry]
     when:
       all:
         - operator: predicate.sdc_lane_change_conflict
@@ -518,6 +523,7 @@ rules:
   - id: sdc_repeated_lane_change
     kind: single_frame
     subject: sdc_agent
+    required_modalities: [lane_geometry]
     when:
       all:
         - operator: predicate.type_is

@@ -11,10 +11,10 @@ from .frames import (
     DataSourceMetadata,
     Frame,
     FrameSampling,
-    MapFeature,
     Point3D,
     ScenarioBundle,
 )
+from .nuscenes_map import normalize_nuscenes_map
 from .validation import DataAdapterError
 
 
@@ -94,7 +94,10 @@ class NuScenesAdapter:
             else (1.0, 0.0, 0.0, 0.0)
         )
         origin_yaw = _yaw_from_quaternion(list(origin_rotation))
-        map_features = _map_features_for_scene(tables, scene_record, origin)
+        map_features = normalize_nuscenes_map(
+            tables.map_json_for_scene(scene_record),
+            origin,
+        )
         velocities = _annotation_velocities(samples, annotations_by_sample)
         ego_velocities = _ego_velocities(tables, samples)
 
@@ -158,6 +161,33 @@ class NuScenesAdapter:
 
         has_lidar_data = tables.has_modality("lidar")
         log_record = tables.log_for_scene(scene_record) or {}
+        lane_features = [
+            feature for feature in map_features.values() if feature.feature_type == "lane"
+        ]
+        lane_centerline_count = sum(bool(feature.polyline) for feature in lane_features)
+        lane_topology_link_count = sum(
+            len(feature.properties.get("exit_lanes", ())) for feature in lane_features
+        )
+        skipped_rule_reasons = {
+            "traffic_lights": "nuScenes mini does not provide per-frame traffic-light state."
+        }
+        if lane_features and lane_centerline_count < len(lane_features):
+            skipped_rule_reasons["lane_geometry"] = (
+                "Some nuScenes lane polygons could not be normalized to centerlines."
+            )
+        map_notes = ()
+        if lane_features:
+            map_notes = (
+                f"NuScenes map normalized {lane_centerline_count}/{len(lane_features)} lane centerlines.",
+                f"NuScenes lane topology contains {lane_topology_link_count} inferred directed links.",
+            )
+        available_capabilities = set(_sensor_capabilities(tables))
+        if map_features:
+            available_capabilities.add("map")
+        if lane_features and lane_centerline_count == len(lane_features):
+            available_capabilities.add("lane_geometry")
+        if lane_topology_link_count:
+            available_capabilities.add("lane_topology")
         metadata = DataSourceMetadata(
             source_type=self.source_type,
             dataset_version=dataset_version,
@@ -177,14 +207,13 @@ class NuScenesAdapter:
                 resampled=False,
                 interpolation=None,
             ),
-            skipped_rule_reasons={
-                "traffic_lights": "nuScenes mini does not provide per-frame traffic-light state."
-            },
+            skipped_rule_reasons=skipped_rule_reasons,
             notes=(
                 "Agent states are nuScenes keyframe annotations; no dense interpolation is applied.",
                 "Ego pose is exposed as track_id='ego' for SDC-compatible rules.",
                 "Internal positions subtract the first ego translation but retain nuScenes global XY axes and radian headings.",
                 "Scenario IR export rotates this internal frame into the first-ego-forward frame.",
+                *map_notes,
             ),
         )
 
@@ -199,7 +228,7 @@ class NuScenesAdapter:
             map_features=map_features,
             source=source,
             has_lidar_data=has_lidar_data,
-            available_capabilities=_sensor_capabilities(tables) | (frozenset({"map"}) if map_features else frozenset()),
+            available_capabilities=frozenset(available_capabilities),
             metadata=metadata,
         )
 
@@ -352,96 +381,6 @@ def _ego_origin(tables: _NuScenesTables, sample: dict) -> tuple[float, float, fl
         return (0.0, 0.0, 0.0)
     x, y, z = ego_pose["translation"]
     return (x, y, z)
-
-
-def _map_features_for_scene(
-    tables: _NuScenesTables,
-    scene: dict,
-    origin: tuple[float, float, float],
-) -> dict[int, MapFeature]:
-    map_json = tables.map_json_for_scene(scene)
-    if not map_json:
-        return {}
-
-    nodes = {row["token"]: row for row in map_json.get("node", [])}
-    polygons = {row["token"]: row for row in map_json.get("polygon", [])}
-    lines = {row["token"]: row for row in map_json.get("line", [])}
-    features: dict[int, MapFeature] = {}
-    next_id = 1
-
-    def node_point(token: str) -> Point3D | None:
-        node = nodes.get(token)
-        if node is None:
-            return None
-        return Point3D(node["x"] - origin[0], node["y"] - origin[1], 0.0)
-
-    def polygon_points(token: str) -> tuple[Point3D, ...]:
-        polygon = polygons.get(token)
-        if polygon is None:
-            return ()
-        points = [node_point(node_token) for node_token in polygon.get("exterior_node_tokens", [])]
-        return tuple(point for point in points if point is not None)
-
-    def line_points(token: str) -> tuple[Point3D, ...]:
-        line = lines.get(token)
-        if line is None:
-            return ()
-        points = [node_point(node_token) for node_token in line.get("node_tokens", [])]
-        return tuple(point for point in points if point is not None)
-
-    def add_polygon(feature_type: str, row: dict, polygon_token: str, properties: dict[str, object] | None = None) -> None:
-        nonlocal next_id
-        points = polygon_points(polygon_token)
-        if len(points) < 3:
-            return
-        features[next_id] = MapFeature(
-            feature_id=next_id,
-            feature_type=feature_type,
-            polyline=(),
-            polygon=points,
-            properties={
-                "token": row.get("token", ""),
-                **(properties or {}),
-            },
-        )
-        next_id += 1
-
-    def add_line(feature_type: str, row: dict, line_token: str, properties: dict[str, object] | None = None) -> None:
-        nonlocal next_id
-        points = line_points(line_token)
-        if len(points) < 2:
-            return
-        features[next_id] = MapFeature(
-            feature_id=next_id,
-            feature_type=feature_type,
-            polyline=points,
-            polygon=(),
-            properties={
-                "token": row.get("token", ""),
-                **(properties or {}),
-            },
-        )
-        next_id += 1
-
-    for row in map_json.get("lane", []):
-        add_polygon("lane", row, row.get("polygon_token", ""), {"lane_type": row.get("lane_type", "")})
-    for row in map_json.get("road_segment", []):
-        add_polygon("road_segment", row, row.get("polygon_token", ""), {"is_intersection": row.get("is_intersection", False)})
-    for row in map_json.get("walkway", []):
-        add_polygon("walkway", row, row.get("polygon_token", ""))
-    for row in map_json.get("ped_crossing", []):
-        add_polygon("ped_crossing", row, row.get("polygon_token", ""))
-    for row in map_json.get("stop_line", []):
-        add_polygon("stop_line", row, row.get("polygon_token", ""), {"stop_line_type": row.get("stop_line_type", "")})
-    for row in map_json.get("road_divider", []):
-        add_line("road_divider", row, row.get("line_token", ""))
-    for row in map_json.get("lane_divider", []):
-        add_line("lane_divider", row, row.get("line_token", ""))
-    for row in map_json.get("drivable_area", []):
-        for polygon_token in row.get("polygon_tokens", []):
-            add_polygon("drivable_area", row, polygon_token)
-
-    return features
 
 
 def _local_point(translation: list[float], origin: tuple[float, float, float]) -> Point3D:

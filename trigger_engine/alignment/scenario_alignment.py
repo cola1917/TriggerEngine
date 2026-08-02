@@ -21,6 +21,12 @@ def _available_modalities(bundle: ScenarioBundle, frame) -> frozenset[str]:
         modalities.add("traffic_lights")
     if bundle.map_features:
         modalities.add("map")
+        lane_features = [
+            feature for feature in bundle.map_features.values()
+            if feature.feature_type == "lane"
+        ]
+        if lane_features and all(feature.polyline for feature in lane_features):
+            modalities.add("lane_geometry")
     if bundle.has_lidar_data and frame.step_index <= bundle.current_time_index:
         modalities.add("lidar")
     return frozenset(modalities)

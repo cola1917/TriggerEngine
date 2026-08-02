@@ -45,7 +45,7 @@ class RuleEngine:
             )
             pair_mode = rule.pair.mode
             for aligned_frame in context.input_frames:
-                if not _rule_applies_to_frame(rule, aligned_frame):
+                if not _rule_applies_to_frame(rule, aligned_frame, context):
                     frames_skipped += 1
                     continue
                 frames_evaluated += 1
@@ -268,9 +268,14 @@ class RuleEngine:
         return None
 
 
-def _rule_applies_to_frame(rule, aligned_frame) -> bool:
+def _rule_applies_to_frame(rule, aligned_frame, context=None) -> bool:
     required_modalities = getattr(rule, "required_modalities", frozenset())
-    if required_modalities and not required_modalities.issubset(aligned_frame.available_modalities):
+    available_modalities = set(aligned_frame.available_modalities)
+    if aligned_frame.frame.traffic_lights:
+        available_modalities.add("traffic_lights")
+    if _has_lane_geometry(context):
+        available_modalities.add("lane_geometry")
+    if required_modalities and not required_modalities.issubset(available_modalities):
         return False
     if not getattr(rule.condition, "calls", None):
         return True
@@ -278,3 +283,14 @@ def _rule_applies_to_frame(rule, aligned_frame) -> bool:
         if call.args.get("only_current_frame", False):
             return aligned_frame.visibility == "current" and aligned_frame.frame.phase == "current"
     return True
+
+
+def _has_lane_geometry(context) -> bool:
+    if context is None:
+        return False
+    lane_features = [
+        feature
+        for feature in getattr(context, "map_features", {}).values()
+        if feature.feature_type == "lane"
+    ]
+    return bool(lane_features) and all(feature.polyline for feature in lane_features)
